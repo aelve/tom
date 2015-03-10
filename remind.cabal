@@ -1,0 +1,42 @@
+name:                remind
+version:             0.1.0.0
+-- synopsis:            
+-- description:         
+license:             BSD3
+license-file:        LICENSE
+author:              Artyom
+maintainer:          yom@artyom.me
+-- copyright:           
+-- category:            
+build-type:          Simple
+-- extra-source-files:  
+cabal-version:       >=1.10
+
+executable remind-daemon
+  main-is:             Daemon.hs
+  -- other-modules:       
+  -- other-extensions:    
+  build-depends:       base >=4.7 && <4.8
+                     , directory
+                     , filelock
+                     , filepath
+                     , gtk3 >= 0.13
+                     , strict
+                     , time >= 1.4
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+
+executable remind
+  main-is:             Remind.hs
+  -- other-modules:       
+  -- other-extensions:    
+  build-depends:       base >=4.7 && <4.8
+                     , deepseq
+                     , directory
+                     , filelock
+                     , filepath
+                     , parsec == 3.*
+                     , strict
+                     , time >= 1.4
+  hs-source-dirs:      src
+  default-language:    Haskell2010
