@@ -30,17 +30,20 @@ Time format:
 
   * “-” = “current time”
 
-  * H[MM][am/pm][timezone]
+  * H[.MM][:SS][am/pm][timezone]
     (all in square brackets can be omitted)
     (hour can have 1 or 2 digits)
 
     examples:
-      103    – 01.03
-      2      – 02.00
-      2pm    – 14.00
+      1.03      – 01.03
+      2         – 02.00
+      2pm       – 14.00
+      2.03:10pm – 14.03:10
 --       2pmutc – 14.00 UTC
 
   * “.MM” – “next occasion it's MM minutes”
+
+  * “:SS” – “next occasion it's SS seconds”
 
 -}
 guessTime :: String -> String -> IO UTCTime
@@ -52,25 +55,23 @@ guessTime d t = do
   -- Time parsers.
   let currentTimeP = string "-" *> pure time
       timeMomentP = do
-        (h, m) <- choice $ map try
-          [ do h <- read <$> count 2 digit
-               m <- read <$> count 2 digit
-               return (h, m)
-          , do h <- read <$> count 1 digit
-               m <- read <$> count 2 digit
-               return (h, m)
-          , do h <- read <$> counts [2,1] digit
-               return (h, 0)
-          ]
+        h <- read <$> counts [2,1] digit
+        m <- char '.' *> (read <$> count 2 digit) <|> pure 0
+        s <- char ':' *> (read <$> count 2 digit) <|> pure 0
         pm <- choice [ string "pm" *> pure True
                      , string "am" *> pure False
                      , pure False ]
-        return (TimeOfDay (if pm then 12+h else h) m 0)
+        return (TimeOfDay (if pm then 12+h else h) m s)
       minuteOccasionP = do
         string "."
         m <- read <$> count 2 digit
         let h = (if m <= todMin time then succ else id) (todHour time)
         return (TimeOfDay h m 0)
+      secondOccasionP = do
+        string ":"
+        s <- read <$> count 2 digit
+        let m = (if s <= todSec time then succ else id) (todMin time)
+        return (TimeOfDay (todHour time) m s)
   -- Day parsers.
   let dayMomentP = do
         let dayP   = read <$> counts [2,1] digit
@@ -88,7 +89,8 @@ guessTime d t = do
         return (fromGregorian y m d)
       nullDayP = pure (fromGregorian year month day)
   -- Combined parsers.
-  let timeP = choice $ map try [currentTimeP, timeMomentP, minuteOccasionP]
+  let timeP = choice $ map try [ currentTimeP, timeMomentP, minuteOccasionP
+                               , secondOccasionP ]
       dayP  = choice $ map try [dayMomentP, nullDayP]
   let day'  = either (error.show) id $ parse (dayP <* eof) "" d
   let time' = either (error.show) id $ parse (timeP <* eof) "" t
