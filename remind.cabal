@@ -14,7 +14,7 @@ cabal-version:       >=1.10
 
 executable remind-daemon
   main-is:             Daemon.hs
-  -- other-modules:       
+  other-modules:       Common
   -- other-extensions:    
   build-depends:       base >=4.7 && <4.8
                      , directory
@@ -28,7 +28,7 @@ executable remind-daemon
 
 executable remind
   main-is:             Remind.hs
-  -- other-modules:       
+  other-modules:       Common
   -- other-extensions:    
   build-depends:       base >=4.7 && <4.8
                      , deepseq

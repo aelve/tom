@@ -10,28 +10,10 @@ import System.FileLock
 import Control.Monad
 import Text.Parsec hiding ((<|>))
 import Control.DeepSeq
+import GHC.Exts (sortWith)
+import Data.Foldable (for_)
 
-data Reminder = Reminder {
-    time    :: UTCTime
-  , message :: String
-  }
-  deriving (Read, Show)
-
-getDir = do
-  dir <- getAppUserDataDirectory "remind"
-  ex <- doesDirectoryExist dir
-  unless ex $
-    createDirectory dir
-  return dir
-
-withReminderFile action = do
-  dir <- getDir
-  withFileLock (dir </> "lock") Exclusive $ \_ -> do
-    let fileName = (dir </> "reminders")
-    ex <- doesFileExist fileName
-    unless ex $
-      writeFile fileName ""
-    action fileName
+import Common
 
 {-
 Months, days and hours can be specified using 1 or 2 digits. Years can be
@@ -114,14 +96,23 @@ guessTime d t = do
 
 main = do
   args <- getArgs
-  let (ds, ts, msg) = case args of
-        (dt:msg) -> let (a,b) = break (== ',') dt
-                    in  if null b then ("", a, unwords msg)
-                                  else (a, tail b, unwords msg)
+  if null args
+    then listReminders
+    else scheduleReminder args
+
+scheduleReminder (dt:msg) = do
+  let (ds, ts) = let (a,b) = break (== ',') dt
+                 in  if null b then ("", a) else (a, tail b)
   -- Forcing evaluation because otherwise, if something fails, it'll fail
   -- during writing the reminder, and that'd be bad.
   !t <- force <$> guessTime ds ts
   withReminderFile $ \f -> do
-    appendFile f (show (Reminder t msg) ++ "\n")
+    appendFile f (show (Reminder t (unwords msg)) ++ "\n")
     zonedT <- utcToLocalZonedTime t
     putStrLn ("Scheduled a reminder at " ++ show zonedT ++ ".")
+
+listReminders = do
+  withReminderFile $ \f -> do
+    rs <- sortWith time <$> readReminders f
+    for_ rs $ \r -> do
+      putStrLn (show (time r) ++ ": " ++ message r)
