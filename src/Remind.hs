@@ -115,9 +115,9 @@ guessTime d t = do
 main = do
   args <- getArgs
   let (ds, ts, msg) = case args of
-        [msg]         -> ("", "5m", msg)
-        [ts, msg]     -> ("", ts  , msg)
-        [ds, ts, msg] -> (ds, ts  , msg)
+        (dt:msg) -> let (a,b) = break (== ',') dt
+                    in  if null b then ("", a, unwords msg)
+                                  else (a, tail b, unwords msg)
   -- Forcing evaluation because otherwise, if something fails, it'll fail
   -- during writing the reminder, and that'd be bad.
   !t <- force <$> guessTime ds ts
