@@ -34,16 +34,23 @@ withReminderFile action = do
     action fileName
 
 {-
+Months, days and hours can be specified using 1 or 2 digits. Years can be
+specified using 2 or 4 digits.
+
 Day format:
 
-  * (M|MM)-(D|DD) = month, day
-  * D|DD = current month, day
+  * Y-M-D = year, month, day
+            (year can have 2 or 4 digits, month and day – 1 or 2)
+  * M-D   = current year, month, day
+  * D     = current year, current month, day
 
 Time format:
 
   * “-” = “current time”
 
-  * (H|HH)[MM][am/pm][timezone] (all in square brackets can be omitted)
+  * H[MM][am/pm][timezone]
+    (all in square brackets can be omitted)
+    (hour can have 1 or 2 digits)
 
     examples:
       103    – 01.03
@@ -84,12 +91,19 @@ guessTime d t = do
         return (TimeOfDay h m 0)
   -- Day parsers.
   let dayMomentP = do
-        m <- choice $ map try
-          [ read <$> counts [2,1] digit <* string "-"
-          , pure month
-          ]
-        d <- read <$> counts [2,1] digit
-        return (fromGregorian year m d)
+        let dayP   = read <$> counts [2,1] digit
+            monthP = read <$> counts [2,1] digit <* string "-"
+            yearP  = do
+              digits <- counts [4,2] digit
+              string "-"
+              if length digits == 2
+                then return (read ("20" ++ digits))
+                else return (read digits)
+        (y,m,d) <- choice $ map try
+          [ (,,) <$> yearP     <*> monthP     <*> dayP
+          , (,,) <$> pure year <*> monthP     <*> dayP
+          , (,,) <$> pure year <*> pure month <*> dayP ]
+        return (fromGregorian y m d)
       nullDayP = pure (fromGregorian year month day)
   -- Combined parsers.
   let timeP = choice $ map try [currentTimeP, timeMomentP, minuteOccasionP]
