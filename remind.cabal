@@ -17,12 +17,16 @@ executable remind-daemon
   other-modules:       Common
   -- other-extensions:    
   build-depends:       base >=4.7 && <4.8
+                     , deepseq
+                     , containers
                      , directory
                      , filelock
                      , filepath
                      , gtk3 >= 0.13
                      , strict
                      , time >= 1.4
+                     , tz
+                     , uuid
   hs-source-dirs:      src
   default-language:    Haskell2010
 
@@ -36,7 +40,10 @@ executable remind
                      , filelock
                      , filepath
                      , parsec == 3.*
+                     , random >= 1
                      , strict
                      , time >= 1.4
+                     , tz
+                     , uuid
   hs-source-dirs:      src
   default-language:    Haskell2010

@@ -5,6 +5,7 @@ import Control.Applicative
 import System.FilePath
 import System.Directory
 import Data.Time
+import Data.Time.Zones
 import System.Environment
 import System.FileLock
 import Control.Monad
@@ -12,6 +13,7 @@ import Text.Parsec hiding ((<|>))
 import Control.DeepSeq
 import GHC.Exts (sortWith)
 import Data.Foldable (for_)
+import System.Random
 
 import Common
 
@@ -46,14 +48,14 @@ Time format:
   * “:SS” – “next occasion it's SS seconds”
 
 -}
-guessTime :: String -> String -> IO UTCTime
-guessTime d t = do
-  ZonedTime (LocalTime (toGregorian->(year,month,day)) time) zone <-
-    getZonedTime
+parseTDMask :: String -> String -> IO TDMask
+parseTDMask d t = do
+  tz <- loadLocalTZ
+  ((cYear, cMonth, cDay), (cHour, cMinute, cSecond)) <-
+    expandTime tz <$> getCurrentTime
   let counts ns p = choice $ map (try . flip count p) ns
-  -- TODO: make parsers return time-changing functions, it could work nicer
   -- Time parsers.
-  let currentTimeP = string "-" *> pure time
+  let currentTimeP = string "-" *> pure id
       timeMomentP = do
         h <- read <$> counts [2,1] digit
         m <- char '.' *> (read <$> count 2 digit) <|> pure 0
@@ -61,18 +63,26 @@ guessTime d t = do
         pm <- choice [ string "pm" *> pure True
                      , string "am" *> pure False
                      , pure False ]
-        return (TimeOfDay (if pm then 12+h else h) m s)
+        return $ setHour   (Just (if pm then 12+h else h))
+               . setMinute (Just m)
+               . setSecond (Just s)
+      -- This one should actually be not a time parser, but whole parser. And
+      -- it should increment days too (sometimes).
       minuteOccasionP = do
         string "."
         m <- read <$> count 2 digit
-        let h = (if m <= todMin time then succ else id) (todHour time)
-        return (TimeOfDay h m 0)
+        let h = if m <= cMinute then cHour+1 else cHour
+        return $ setHour   (Just h)
+               . setMinute (Just m)
+               . setSecond (Just 0)
+      -- See the comment for 'minuteOccasionP'.
       secondOccasionP = do
         string ":"
         s <- read <$> count 2 digit
-        let m = (if s <= todSec time then succ else id) (todMin time)
-        return (TimeOfDay (todHour time) m s)
-  -- Day parsers.
+        let m = if s <= cSecond then cMinute+1 else cMinute
+        return $ setMinute (Just m)
+               . setSecond (Just s)
+  -- Date parsers.
   let dayMomentP = do
         let dayP   = read <$> counts [2,1] digit
             monthP = read <$> counts [2,1] digit <* string "-"
@@ -83,18 +93,24 @@ guessTime d t = do
                 then return (read ("20" ++ digits))
                 else return (read digits)
         (y,m,d) <- choice $ map try
-          [ (,,) <$> yearP     <*> monthP     <*> dayP
-          , (,,) <$> pure year <*> monthP     <*> dayP
-          , (,,) <$> pure year <*> pure month <*> dayP ]
-        return (fromGregorian y m d)
-      nullDayP = pure (fromGregorian year month day)
+          [ (,,) <$> yearP      <*> monthP      <*> dayP
+          , (,,) <$> pure cYear <*> monthP      <*> dayP
+          , (,,) <$> pure cYear <*> pure cMonth <*> dayP ]
+        return $ setYear  (Just y)
+               . setMonth (Just m)
+               . setDay   (Just d)
+      nullDayP = pure id
   -- Combined parsers.
   let timeP = choice $ map try [ currentTimeP, timeMomentP, minuteOccasionP
                                , secondOccasionP ]
-      dayP  = choice $ map try [dayMomentP, nullDayP]
-  let day'  = either (error.show) id $ parse (dayP <* eof) "" d
-  let time' = either (error.show) id $ parse (timeP <* eof) "" t
-  return (zonedTimeToUTC (ZonedTime (LocalTime day' time') zone))
+      dateP = choice $ map try [dayMomentP, nullDayP]
+  let date' = either (error.show) id $ parse (dateP <* eof) "" d
+      time' = either (error.show) id $ parse (timeP <* eof) "" t
+  let defaultMask = TDMask
+        (Just cYear) (Just cMonth) (Just cDay)
+        (Just cHour) (Just cMinute) (Just cSecond)
+        Nothing Nothing
+  return (date' . time' $ defaultMask)
 
 main = do
   args <- getArgs
@@ -107,14 +123,22 @@ scheduleReminder (dt:msg) = do
                  in  if null b then ("", a) else (a, tail b)
   -- Forcing evaluation because otherwise, if something fails, it'll fail
   -- during writing the reminder, and that'd be bad.
-  !t <- force <$> guessTime ds ts
+  !t <- force <$> parseTDMask ds ts
+  newUUID <- randomIO
+  time <- getCurrentTime
+  let reminder = Reminder
+        { mask             = t
+        , message          = unwords msg
+        , lastSeen         = time
+        , lastAcknowledged = time
+        , uuid             = newUUID
+        }
   withReminderFile $ \f -> do
-    appendFile f (show (Reminder t (unwords msg)) ++ "\n")
-    zonedT <- utcToLocalZonedTime t
-    putStrLn ("Scheduled a reminder at " ++ show zonedT ++ ".")
+    appendFile f (show reminder ++ "\n")
+    putStrLn "Scheduled a reminder."
 
 listReminders = do
   withReminderFile $ \f -> do
-    rs <- sortWith time <$> readReminders f
+    rs <- readReminders f
     for_ rs $ \r -> do
-      putStrLn (show (time r) ++ ": " ++ message r)
+      putStrLn (show (mask r) ++ ": " ++ message r)
