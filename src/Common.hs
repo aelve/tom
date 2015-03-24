@@ -68,7 +68,7 @@ data Reminder = Reminder
   deriving (Eq, Read, Show)
 
 getDir = do
-  dir <- getAppUserDataDirectory "remind"
+  dir <- getAppUserDataDirectory "aelve/tom"
   ex <- doesDirectoryExist dir
   unless ex $
     createDirectory dir
