@@ -35,6 +35,19 @@ nonnegative :: (Read a, Integral a) => Parser a
 nonnegative = read <$> many1 digit
 
 {- |
+Parses year, accounting for the “assume current millenium” shortcut.
+
+  * @"10"@   → 2010
+  * @"112"@  → 2112
+  * @"2020"@ → 2020
+  * @"3388"@ → 3388
+-}
+yearP :: Parser Integer
+yearP = do
+  s <- many1 digit
+  return $ if length s < 4 then 2000 + read s else read s
+
+{- |
 A parser for moments in time.
 
 All numbers can be specified using any amount of digits. Date and time are
@@ -46,7 +59,7 @@ Date format:
   * M-D
   * D
 
-Time format: [H][.MM][:SS][am/pm] (all components can be omitted)
+Time format: [H][.MM][:SS][am/pm] (all components can be omitted).
 
 The next suitable time is always chosen. For instance, if it's past 9pm
 already, then “9pm” will resolve to 9pm of the next day. In the same way,
@@ -57,32 +70,20 @@ If the resulting time is always in the past, the function will fail.
 -}
 momentP :: TDParser
 momentP = do
-  -- This helper function reads year from a string, accounting for the
-  -- “assume current millenium” shortcut.
-  --
-  --   - "10"   -> 2010
-  --   - "112"  -> 2112
-  --   - "2020" -> 2020
-  --   - "3388" -> 3388
-  let readYear s = if length s < 4 then 2000 + read s else read s
-
-  -- These are parsers for parts of date. Year and month are always followed
-  -- with “-”, and day is always followed with “,” (the date/time separator).
-  let yearP  :: Parser Integer
-      monthP :: Parser Int
-      dayP   :: Parser Int
-
-      yearP   = (readYear <$> many1 digit) <* string "-"
-      monthP  = nonnegative <* string "-"
-      dayP    = nonnegative <* string ","
-
   -- Parsing date: it's either “Y-M-D”, “M-D”, “D”, or nothing (and then
   -- there is no comma). We use Just to denote that year/month/day is set.
   (mbYear, mbMonth, mbDay) <- choice $ map try
-    [ do y <- yearP; m <- monthP; d <- dayP; return (Just y, Just m, Just d)
-    , do             m <- monthP; d <- dayP; return (Nothing,Just m, Just d)
-    , do                          d <- dayP; return (Nothing,Nothing,Just d)
-    , return (Nothing, Nothing, Nothing) ]
+    [ do y <- yearP       <* string "-"
+         m <- nonnegative <* string "-"
+         d <- nonnegative <* string ","
+         return (Just y, Just m, Just d)
+    , do m <- nonnegative <* string "-"
+         d <- nonnegative <* string ","
+         return (Nothing, Just m, Just d)
+    , do d <- nonnegative <* string ","
+         return (Nothing, Nothing, Just d)
+    , return (Nothing, Nothing, Nothing)
+    ]
 
   -- Parsing time is more complicated. We parse
   -- [hour][.minute][:second][am|pm], where every component is
@@ -229,6 +230,78 @@ momentP = do
       , timezone = Nothing
       }
 
+{- |
+A parser for masks with wildcards.
+
+All numbers can be specified using any amount of digits. Date and time are
+separated with a comma. Date can be omitted.
+
+Date format:
+
+  * Y-M-D
+  * M-D
+  * D
+
+Time format: [H][.MM][:SS][am/pm] (all components can be omitted).
+
+You can use any amount of “x”s instead of a number to specify that it can be
+any number.
+
+Omitted minute/second aren't assumed to be wildcards, so it's safe to do
+“x.30” without it meaning “x.30:x”.
+
+“xpm” does *not* mean “12.00:00–23.59:00”.
+-}
+wildcardP :: TDParser
+wildcardP = do
+  -- A function to turn any parser into a parser which accepts a wildcard
+  -- (and returns Nothing in that case).
+  let wild p = (many1 (char 'x') *> pure Nothing) <|> (Just <$> p)
+
+  -- Parsing date: it's either “Y-M-D”, “M-D”, “D”, or nothing (and then
+  -- there is no comma).
+  (mbYear, mbMonth, mbDay) <- choice $ map try
+    [ do y <- wild yearP       <* string "-"
+         m <- wild nonnegative <* string "-"
+         d <- wild nonnegative <* string ","
+         return (y, m, d)
+    , do m <- wild nonnegative <* string "-"
+         d <- wild nonnegative <* string ","
+         return (Nothing, m, d)
+    , do d <- wild nonnegative <* string ","
+         return (Nothing, Nothing, d)
+    , return (Nothing, Nothing, Nothing)
+    ]
+
+  -- [hour][.minute][:second][am|pm]
+  (mbHour, mbMinute, mbSecond) <- do
+    h <- option Nothing (wild nonnegative)
+    m <- option (Just 0) (char '.' *> wild nonnegative)
+    s <- option (Just 0) (char ':' *> wild nonnegative)
+    -- 1. “pm” means “add 12 to hour”.
+    -- 2. Unless it's 12pm, in which case it doesn't.
+    -- 3. And “am” can't be ignored, because 12am ≠ 12.00.
+    -- 4. 13am shall mean 1.00. For consistency.
+    pm <- choice [ string "pm" *> pure True
+                 , string "am" *> pure False
+                 , pure False ]
+    let fromPM x = if x >= 12 then x else x + 12
+        fromAM x = if x <  12 then x else x - 12
+    -- And now we can return parsed hour, minute, and second.
+    return ((if pm then fromPM else fromAM) <$> h, m, s)
+
+  return $ \_ _ ->
+    TDMask
+      { year     = mbYear
+      , month    = mbMonth
+      , day      = mbDay
+      , hour     = mbHour
+      , minute   = mbMinute
+      , second   = mbSecond
+      , weekdays = Nothing
+      , timezone = Nothing
+      }
+
 main = do
   args <- getArgs
   if null args
@@ -241,7 +314,7 @@ scheduleReminder (dt:msg) = do
   -- Forcing evaluation because otherwise, if something fails, it'll fail
   -- during writing the reminder, and that'd be bad.
   let
-    maskP    = momentP <* eof
+    maskP    = choice (map (\p -> try p <* eof) [momentP, wildcardP])
     maskFunc = either (error . show) id $ parse maskP "" dt
   mask <- evaluate . force $ maskFunc tz time
   newUUID <- randomIO
