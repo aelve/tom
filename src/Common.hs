@@ -7,7 +7,6 @@
 module Common
 (
   TDMask(..),
-  setYear, setMonth, setDay, setHour, setMinute, setSecond, setWeekdays, setTimezone,
   Reminder(..),
   getDir,
   withReminderFile,
@@ -34,6 +33,10 @@ import Data.Maybe
 import Data.UUID hiding (null)
 import Control.DeepSeq
 import GHC.Generics (Generic)
+import Text.Printf
+import Text.Read
+import Text.ParserCombinators.ReadPrec
+import Text.ParserCombinators.ReadP hiding (optional)
 
 data TDMask = TDMask
   { year     :: Maybe Integer
@@ -45,18 +48,52 @@ data TDMask = TDMask
   , weekdays :: Maybe [Int]     -- ^ Numbers between 1 and 7.
   , timezone :: Maybe String    -- ^ 'Nothing' = current timezone is assumed.
   }
-  deriving (Eq, Read, Show, Generic)
+  deriving (Eq, Generic)
+
+-- Examples of format used by Read and Show instances of TDMask:
+-- 
+--   - xxxx-xx-03,13.xx:56
+--   - 2015-xx-xx[6,7],12.00:00(UTC)
+
+instance Show TDMask where
+  show TDMask{..} = do
+    -- Show something with padding. If not set, show some “x”s; if set, show
+    -- and pad with zeroes.
+    -- 
+    -- >>> mb 2 Nothing
+    -- "xx"
+    -- 
+    -- >>> mb 2 (Just 3)
+    -- "03"
+    let mb :: (Show a, Integral a) => Int -> Maybe a -> String
+        mb n Nothing  = replicate n 'x'
+        mb n (Just x) = let s = show x
+                        in  replicate (n - length s) '0' ++ s
+    printf "%s-%s-%s%s,%s.%s:%s%s"
+      (mb 4 year) (mb 2 month) (mb 2 day)
+      (maybe "" show weekdays)
+      (mb 2 hour) (mb 2 minute) (mb 2 second)
+      (maybe "" (\s -> "(" ++ s ++ ")") timezone)
+
+instance Read TDMask where
+  readPrec = do
+    lift skipSpaces
+    let wild p = lift (many1 (char 'x') *> pure Nothing) <|> (Just <$> p)
+    let nonnegative :: (Integral a, Read a) => ReadPrec a
+        nonnegative = lift $ read <$> many1 (satisfy (`elem` ['0'..'9']))
+    year  <- wild nonnegative <* lift (string "-")
+    month <- wild nonnegative <* lift (string "-")
+    day   <- wild nonnegative
+    weekdays <- optional readPrec
+    lift (string ",")
+    hour   <- wild nonnegative <* lift (string ".")
+    minute <- wild nonnegative <* lift (string ":")
+    second <- wild nonnegative
+    timezone <- lift $
+      optional $ between (char '(') (char ')') (munch (/= ')'))
+    return TDMask{..}
 
 instance NFData TDMask
-
-setYear     x m = m {year     = x}
-setMonth    x m = m {month    = x}
-setDay      x m = m {day      = x}
-setHour     x m = m {hour     = x}
-setMinute   x m = m {minute   = x}
-setSecond   x m = m {second   = x}
-setWeekdays x m = m {weekdays = x}
-setTimezone x m = m {timezone = x}
 
 data Reminder = Reminder
   { mask             :: TDMask
