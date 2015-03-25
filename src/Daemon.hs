@@ -24,10 +24,13 @@ loop alertsRef =
     t <- getCurrentTime
     tz <- loadLocalTZ
 
-    -- We show a reminder if it got expired since the moment it was seen, or
-    -- if -it got expired since the moment it was last acknowledged- and -was
-    -- seen more than 5min ago- (i.e. it'll be shown every 5min if you keep
-    -- not acknowledging it).
+    -- We show a reminder if either holds:
+    -- 
+    -- a) It got expired since the moment it was seen.
+    -- 
+    -- b) It got expired since the moment it was last acknowledged, and it
+    -- was seen more than 5min ago. So, it'll be shown every 5min if you keep
+    -- not acknowledging it.
     let isExpired r = do
           reexpired <- reminderInInterval (lastSeen r) t (mask r)
           forgotten <- reminderInInterval (lastAcknowledged r) t (mask r)

@@ -117,6 +117,24 @@ timeInInterval (ha, ma, sa) (hb, mb, sb) (hx, mx, sx) =
                         , (ha,ma,sa) <= (h,m,s)
                         , (hb,mb,sb) >= (h,m,s) ]      
 
+-- | Round 'UTCTime' down to have a whole number of seconds.
+floorUTCTime :: UTCTime -> UTCTime
+floorUTCTime t = t {utctDayTime = fromInteger (floor (utctDayTime t))}
+
+-- | Round 'UTCTime' up to have a whole number of seconds.
+--
+-- It ignores leap seconds (the result here was expected to be “23:59:60”):
+--
+-- >>> ceilingUTCTime (read "2012-06-30 23:59:59.99")
+-- 2012-07-01 00:00:00 UTC
+ceilingUTCTime :: UTCTime -> UTCTime
+ceilingUTCTime t
+  | d >= 86400 = t { utctDay     = addDays 1 (utctDay t)
+                   , utctDayTime = 0 }
+  | otherwise  = t { utctDayTime = fromInteger d }
+  where
+    d = ceiling (utctDayTime t)
+
 -- | Check whether a reminder has fired in a time interval. Not as efficient
 -- as it could be (it takes O(days in the interval)). 'IO' is needed to look
 -- up the timezone from the name contained in the mask.
@@ -125,7 +143,7 @@ reminderInInterval
   -> UTCTime       -- ^ End of the interval.
   -> TDMask        -- ^ Reminder's time mask.
   -> IO Bool
-reminderInInterval a b TDMask{..} = do
+reminderInInterval (ceilingUTCTime -> a) (floorUTCTime -> b) TDMask{..} = do
   -- If timezone is specified in the reminder, use it, and otherwise use the
   -- local one.
   tz <- fromMaybe loadLocalTZ (loadSystemTZ <$> timezone)
