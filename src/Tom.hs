@@ -314,7 +314,8 @@ scheduleReminder (dt:msg) = do
   -- Forcing evaluation because otherwise, if something fails, it'll fail
   -- during writing the reminder, and that'd be bad.
   let
-    maskP    = choice (map (\p -> try p <* eof) [momentP, wildcardP])
+    maskP    = choice . map (\p -> try (p <* eof)) $
+                 [momentP, wildcardP]
     maskFunc = either (error . show) id $ parse maskP "" dt
   mask <- evaluate . force $ maskFunc tz time
   newUUID <- randomIO
