@@ -34,6 +34,20 @@ type TDParser = Parser (TZ -> UTCTime -> TDMask)
 nonnegative :: (Read a, Integral a) => Parser a
 nonnegative = read <$> many1 digit
 
+-- | A parser for “am”/“pm”, returning the function to apply to hours to get
+-- the corrected version.
+parseAMPM :: (Num a, Ord a) => Parser (a -> a)
+parseAMPM = do
+  -- 1. “pm” means “add 12 to hour”.
+  -- 2. Unless it's 12pm, in which case it doesn't.
+  -- 3. And “am” can't be ignored, because 12am ≠ 12.00.
+  -- 4. 13am shall mean 1.00. For consistency.
+  let fromPM x = if x >= 12 then x else x + 12
+      fromAM x = if x <  12 then x else x - 12
+  choice [ string "pm" *> pure fromPM
+         , string "am" *> pure fromAM
+         , pure id ]
+
 {- |
 Parses year, accounting for the “assume current millenium” shortcut.
 
@@ -97,17 +111,10 @@ momentP = do
     -- Same for minute/second.
     s <- Just <$> (char ':' *> nonnegative)           <|>
          pure (if isJust m then Just 0 else Nothing)
-    -- 1. “pm” means “add 12 to hour”.
-    -- 2. Unless it's 12pm, in which case it doesn't.
-    -- 3. And “am” can't be ignored, because 12am ≠ 12.00.
-    -- 4. 13am shall mean 1.00. For consistency.
-    pm <- choice [ string "pm" *> pure True
-                 , string "am" *> pure False
-                 , pure False ]
-    let fromPM x = if x >= 12 then x else x + 12
-        fromAM x = if x <  12 then x else x - 12
+    -- “am”/“pm”
+    fromAMPM <- parseAMPM
     -- And now we can return parsed hour, minute, and second.
-    return ((if pm then fromPM else fromAM) <$> h, m, s)
+    return (fromAMPM <$> h, m, s)
 
   -- Finally, we have to fill in the blanks (“Nothing”) so that the result is
   -- the *least* possible time which is still bigger than the current time.
@@ -278,17 +285,10 @@ wildcardP = do
     h <- option Nothing (wild nonnegative)
     m <- option (Just 0) (char '.' *> wild nonnegative)
     s <- option (Just 0) (char ':' *> wild nonnegative)
-    -- 1. “pm” means “add 12 to hour”.
-    -- 2. Unless it's 12pm, in which case it doesn't.
-    -- 3. And “am” can't be ignored, because 12am ≠ 12.00.
-    -- 4. 13am shall mean 1.00. For consistency.
-    pm <- choice [ string "pm" *> pure True
-                 , string "am" *> pure False
-                 , pure False ]
-    let fromPM x = if x >= 12 then x else x + 12
-        fromAM x = if x <  12 then x else x - 12
+    -- “am”/“pm”
+    fromAMPM <- parseAMPM
     -- And now we can return parsed hour, minute, and second.
-    return ((if pm then fromPM else fromAM) <$> h, m, s)
+    return (fromAMPM <$> h, m, s)
 
   return $ \_ _ ->
     TDMask
