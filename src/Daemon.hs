@@ -53,7 +53,8 @@ loop alertsRef =
                  []       -- flags
                  MessageInfo
                  ButtonsYesNo
-                 ("Reminder: " ++ message r)
+                 ("Reminder: " ++ message r ++ "\n\n" ++
+                  "(" ++ show (mask r) ++ ")")
 
       -- When we get a response, we just update “last seen” and “last
       -- acknowledged” fields and close the alert window.
