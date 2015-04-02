@@ -14,6 +14,8 @@ module Common
   modifyReminder,
   expandTime,
   reminderInInterval,
+  tzNameToOlson,
+  olsonToTZName,
 )
 where
 
@@ -25,11 +27,13 @@ import System.FileLock
 import Data.Time
 import Data.Time.Calendar.OrdinalDate
 import Data.Time.Zones
+import Data.Tuple
 import Data.List (delete)
 import qualified System.IO.Strict as Strict
 import Data.Fixed
 import Data.Ix
 import Data.Maybe
+import Data.Char
 import Data.UUID hiding (null)
 import Control.DeepSeq
 import GHC.Generics (Generic)
@@ -205,3 +209,226 @@ reminderInInterval (ceilingUTCTime -> a) (floorUTCTime -> b) TDMask{..} = do
         , maybe True (snd (mondayStartWeek whole) `elem`) weekdays
         ]
   return (not . null . filter check $ [dateA' .. dateB'])
+
+-- | Return Olson timezone name corresponding to an abbreviation.
+tzNameToOlson :: String -> Maybe String
+tzNameToOlson s = lookup (map toUpper s) tzAbbreviations
+
+-- | Return abbreviation corresponding to Olson timezone name. Should never
+-- be called on zone names which weren't produced by 'tzNameToOlson'.
+olsonToTZName :: String -> String
+olsonToTZName s = fromMaybe err $ lookup s (map swap tzAbbreviations)
+  where
+    err = error "olsonToTZName: can't find the name '" ++ s ++ "'"
+
+tzAbbreviations :: [(String, String)]
+tzAbbreviations =
+  [ ("UTC", "UTC")
+  , ("UCT", "UCT")
+  , ("GMT", "GMT")
+  , ("EET", "EET")
+  , ("MSK", "Europe/Moscow")
+  , ("VLAT", "Asia/Vladivostok")
+  , ("OMST", "Asia/Omsk")
+  , ("KRAT", "Asia/Krasnoyarsk")
+  , ("YAKT", "Asia/Yakutsk")
+  ]
+
+{-
+A list of time zones, taken from Wikipedia.
+All of these are unavailable in tzAbbreviations yet.
+
+ACDT 	Australian Central Daylight Savings Time 	UTC+10:30
+ACST 	Australian Central Standard Time 	UTC+09:30
+ACT 	Acre Time 	UTC−05
+ACT 	ASEAN Common Time 	UTC+08
+ADT 	Atlantic Daylight Time 	UTC−03
+AEDT 	Australian Eastern Daylight Savings Time 	UTC+11
+AEST 	Australian Eastern Standard Time 	UTC+10
+AFT 	Afghanistan Time 	UTC+04:30
+AKDT 	Alaska Daylight Time 	UTC−08
+AKST 	Alaska Standard Time 	UTC−09
+AMST 	Amazon Summer Time (Brazil)[1] 	UTC−03
+AMST 	Armenia Summer Time 	UTC+05
+AMT 	Amazon Time (Brazil)[2] 	UTC−04
+AMT 	Armenia Time 	UTC+04
+ART 	Argentina Time 	UTC−03
+AST 	Arabia Standard Time 	UTC+03
+AST 	Atlantic Standard Time 	UTC−04
+AWDT 	Australian Western Daylight Time 	UTC+09
+AWST 	Australian Western Standard Time 	UTC+08
+AZOST 	Azores Standard Time 	UTC−01
+AZT 	Azerbaijan Time 	UTC+04
+BDT 	Brunei Time 	UTC+08
+BIOT 	British Indian Ocean Time 	UTC+06
+BIT 	Baker Island Time 	UTC−12
+BOT 	Bolivia Time 	UTC−04
+BRST 	Brasilia Summer Time 	UTC−02
+BRT 	Brasilia Time 	UTC−03
+BST 	Bangladesh Standard Time 	UTC+06
+BST 	British Summer Time (British Standard Time from Feb 1968 to Oct 1971) 	UTC+01
+BTT 	Bhutan Time 	UTC+06
+CAT 	Central Africa Time 	UTC+02
+CCT 	Cocos Islands Time 	UTC+06:30
+CDT 	Central Daylight Time (North America) 	UTC−05
+CDT 	Cuba Daylight Time[3] 	UTC−04
+CEDT 	Central European Daylight Time 	UTC+02
+CEST 	Central European Summer Time (Cf. HAEC) 	UTC+02
+CET 	Central European Time 	UTC+01
+CHADT 	Chatham Daylight Time 	UTC+13:45
+CHAST 	Chatham Standard Time 	UTC+12:45
+CHOT 	Choibalsan 	UTC+08
+ChST 	Chamorro Standard Time 	UTC+10
+CHUT 	Chuuk Time 	UTC+10
+CIST 	Clipperton Island Standard Time 	UTC−08
+CIT 	Central Indonesia Time 	UTC+08
+CKT 	Cook Island Time 	UTC−10
+CLST 	Chile Summer Time 	UTC−03
+CLT 	Chile Standard Time 	UTC−04
+COST 	Colombia Summer Time 	UTC−04
+COT 	Colombia Time 	UTC−05
+CST 	Central Standard Time (North America) 	UTC−06
+CST 	China Standard Time 	UTC+08
+CST 	Central Standard Time (Australia) 	UTC+09:30
+CST 	Central Summer Time (Australia) 	UTC+10:30
+CST 	Cuba Standard Time 	UTC−05
+CT 	China time 	UTC+08
+CVT 	Cape Verde Time 	UTC−01
+CWST 	Central Western Standard Time (Australia) unofficial 	UTC+08:45
+CXT 	Christmas Island Time 	UTC+07
+DAVT 	Davis Time 	UTC+07
+DDUT 	Dumont d'Urville Time 	UTC+10
+DFT 	AIX specific equivalent of Central European Time[4] 	UTC+01
+EASST 	Easter Island Standard Summer Time 	UTC−05
+EAST 	Easter Island Standard Time 	UTC−06
+EAT 	East Africa Time 	UTC+03
+ECT 	Eastern Caribbean Time (does not recognise DST) 	UTC−04
+ECT 	Ecuador Time 	UTC−05
+EDT 	Eastern Daylight Time (North America) 	UTC−04
+EEDT 	Eastern European Daylight Time 	UTC+03
+EEST 	Eastern European Summer Time 	UTC+03
+EGST 	Eastern Greenland Summer Time 	UTC+00
+EGT 	Eastern Greenland Time 	UTC−01
+EIT 	Eastern Indonesian Time 	UTC+09
+EST 	Eastern Standard Time (North America) 	UTC−05
+EST 	Eastern Standard Time (Australia) 	UTC+10
+FET 	Further-eastern European Time 	UTC+03
+FJT 	Fiji Time 	UTC+12
+FKST 	Falkland Islands Standard Time 	UTC−03
+FKST 	Falkland Islands Summer Time 	UTC−03
+FKT 	Falkland Islands Time 	UTC−04
+FNT 	Fernando de Noronha Time 	UTC−02
+GALT 	Galapagos Time 	UTC−06
+GAMT 	Gambier Islands 	UTC−09
+GET 	Georgia Standard Time 	UTC+04
+GFT 	French Guiana Time 	UTC−03
+GILT 	Gilbert Island Time 	UTC+12
+GIT 	Gambier Island Time 	UTC−09
+GST 	South Georgia and the South Sandwich Islands 	UTC−02
+GST 	Gulf Standard Time 	UTC+04
+GYT 	Guyana Time 	UTC−04
+HADT 	Hawaii-Aleutian Daylight Time 	UTC−09
+HAEC 	Heure Avancée d'Europe Centrale francised name for CEST 	UTC+02
+HAST 	Hawaii-Aleutian Standard Time 	UTC−10
+HKT 	Hong Kong Time 	UTC+08
+HMT 	Heard and McDonald Islands Time 	UTC+05
+HOVT 	Khovd Time 	UTC+07
+HST 	Hawaii Standard Time 	UTC−10
+ICT 	Indochina Time 	UTC+07
+IDT 	Israel Daylight Time 	UTC+03
+IOT 	Indian Ocean Time 	UTC+03
+IRDT 	Iran Daylight Time 	UTC+04:30
+IRKT 	Irkutsk Time 	UTC+08
+IRST 	Iran Standard Time 	UTC+03:30
+IST 	Indian Standard Time 	UTC+05:30
+IST 	Irish Standard Time[5] 	UTC+01
+IST 	Israel Standard Time 	UTC+02
+JST 	Japan Standard Time 	UTC+09
+KGT 	Kyrgyzstan time 	UTC+06
+KOST 	Kosrae Time 	UTC+11
+KST 	Korea Standard Time 	UTC+09
+LHST 	Lord Howe Standard Time 	UTC+10:30
+LHST 	Lord Howe Summer Time 	UTC+11
+LINT 	Line Islands Time 	UTC+14
+MAGT 	Magadan Time 	UTC+12
+MART 	Marquesas Islands Time 	UTC−09:30
+MAWT 	Mawson Station Time 	UTC+05
+MDT 	Mountain Daylight Time (North America) 	UTC−06
+MET 	Middle European Time Same zone as CET 	UTC+01
+MEST 	Middle European Saving Time Same zone as CEST 	UTC+02
+MHT 	Marshall Islands 	UTC+12
+MIST 	Macquarie Island Station Time 	UTC+11
+MIT 	Marquesas Islands Time 	UTC−09:30
+MMT 	Myanmar Time 	UTC+06:30
+MST 	Malaysia Standard Time 	UTC+08
+MST 	Mountain Standard Time (North America) 	UTC−07
+MST 	Myanmar Standard Time 	UTC+06:30
+MUT 	Mauritius Time 	UTC+04
+MVT 	Maldives Time 	UTC+05
+MYT 	Malaysia Time 	UTC+08
+NCT 	New Caledonia Time 	UTC+11
+NDT 	Newfoundland Daylight Time 	UTC−02:30
+NFT 	Norfolk Time 	UTC+11:30
+NPT 	Nepal Time 	UTC+05:45
+NST 	Newfoundland Standard Time 	UTC−03:30
+NT 	Newfoundland Time 	UTC−03:30
+NUT 	Niue Time 	UTC−11
+NZDT 	New Zealand Daylight Time 	UTC+13
+NZST 	New Zealand Standard Time 	UTC+12
+ORAT 	Oral Time 	UTC+05
+PDT 	Pacific Daylight Time (North America) 	UTC−07
+PET 	Peru Time 	UTC−05
+PETT 	Kamchatka Time 	UTC+12
+PGT 	Papua New Guinea Time 	UTC+10
+PHOT 	Phoenix Island Time 	UTC+13
+PKT 	Pakistan Standard Time 	UTC+05
+PMDT 	Saint Pierre and Miquelon Daylight time 	UTC−02
+PMST 	Saint Pierre and Miquelon Standard Time 	UTC−03
+PONT 	Pohnpei Standard Time 	UTC+11
+PST 	Pacific Standard Time (North America) 	UTC−08
+PST 	Philippine Standard Time 	UTC+08
+PYST 	Paraguay Summer Time (South America)[6] 	UTC−03
+PYT 	Paraguay Time (South America)[7] 	UTC−04
+RET 	Réunion Time 	UTC+04
+ROTT 	Rothera Research Station Time 	UTC−03
+SAKT 	Sakhalin Island time 	UTC+11
+SAMT 	Samara Time 	UTC+04
+SAST 	South African Standard Time 	UTC+02
+SBT 	Solomon Islands Time 	UTC+11
+SCT 	Seychelles Time 	UTC+04
+SGT 	Singapore Time 	UTC+08
+SLST 	Sri Lanka Time 	UTC+05:30
+SRET 	Srednekolymsk Time 	UTC+11
+SRT 	Suriname Time 	UTC−03
+SST 	Samoa Standard Time 	UTC−11
+SST 	Singapore Standard Time 	UTC+08
+SYOT 	Showa Station Time 	UTC+03
+TAHT 	Tahiti Time 	UTC−10
+THA 	Thailand Standard Time 	UTC+07
+TFT 	Indian/Kerguelen 	UTC+05
+TJT 	Tajikistan Time 	UTC+05
+TKT 	Tokelau Time 	UTC+13
+TLT 	Timor Leste Time 	UTC+09
+TMT 	Turkmenistan Time 	UTC+05
+TOT 	Tonga Time 	UTC+13
+TVT 	Tuvalu Time 	UTC+12
+ULAT 	Ulaanbaatar Time 	UTC+08
+USZ1 	Kaliningrad Time 	UTC+02
+UYST 	Uruguay Summer Time 	UTC−02
+UYT 	Uruguay Standard Time 	UTC−03
+UZT 	Uzbekistan Time 	UTC+05
+VET 	Venezuelan Standard Time 	UTC−04:30
+VOLT 	Volgograd Time 	UTC+04
+VOST 	Vostok Station Time 	UTC+06
+VUT 	Vanuatu Time 	UTC+11
+WAKT 	Wake Island Time 	UTC+12
+WAST 	West Africa Summer Time 	UTC+02
+WAT 	West Africa Time 	UTC+01
+WEDT 	Western European Daylight Time 	UTC+01
+WEST 	Western European Summer Time 	UTC+01
+WET 	Western European Time 	UTC
+WIT 	Western Indonesian Time 	UTC+07
+WST 	Western Standard Time 	UTC+08
+YEKT 	Yekaterinburg Time 	UTC+05
+Z 	Zulu Time (Coordinated Universal Time) 	UTC
+-}
