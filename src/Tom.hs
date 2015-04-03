@@ -21,7 +21,7 @@ import GHC.Exts (sortWith)
 import Data.Foldable (asum, for_)
 import System.Random
 import Data.Maybe
-import Data.List (find, isPrefixOf)
+import Data.List (find)
 import Control.Exception (evaluate)
 
 import Common
@@ -63,14 +63,8 @@ yearP = do
 
 -- | Timezone name parser. Returns already queried Olson name.
 timezoneP :: Parser String
-timezoneP = try $ do
-  -- The main problem is the complication with am|pm – “amz” could mean “am,
-  -- timezone Z”, or it could mean “timezone AMZ”. To solve this, we use the
-  -- fact that all time zones have 3 or more characters, and that there are
-  -- no 5-character time zones starting with “am” or “pm”.
-  name <- many1 letter
-  guard . not $
-    length name >= 5 && any (`isPrefixOf` (map toLower name)) ["am","pm"]
+timezoneP = do
+  name <- many1 (letter <|> digit <|> oneOf "-+")
   case tzNameToOlson name of
     Nothing -> mzero
     Just tz -> return tz
@@ -127,16 +121,11 @@ momentP = do
     -- Same for minute/second.
     s <- Just <$> (char ':' *> nonnegative)           <|>
          pure (if isJust m then Just 0 else Nothing)
-    -- “am”/“pm” and timezone. We try timezone first, because some timezones
-    -- start with “am”/“pm”.
-    (fromAMPM, tz) <- choice
-      [ do tz <- timezoneP
-           return (id, Just tz)
-      , do ampm <- parseAMPM
-           mbTZ <- optional timezoneP
-           return (ampm, mbTZ)
-      ]
-    -- And now we can return parsed hour, minute, and second.
+    -- “am”/“pm”. 
+    fromAMPM <- parseAMPM
+    -- Timezone.
+    tz <- optional timezoneP
+    -- And now we can return parsed hour, minute, second, and timezone.
     return (fromAMPM <$> h, m, s, tz)
 
   -- Finally, we have to fill in the blanks (“Nothing”) so that the result is
@@ -317,16 +306,11 @@ wildcardP = do
     h <- option Nothing (wild nonnegative)
     m <- option (Just 0) (char '.' *> wild nonnegative)
     s <- option (Just 0) (char ':' *> wild nonnegative)
-    -- “am”/“pm” and timezone. We try timezone first, because some timezones
-    -- start with “am”/“pm”.
-    (fromAMPM, tz) <- choice
-      [ do tz <- timezoneP
-           return (id, Just tz)
-      , do ampm <- parseAMPM
-           mbTZ <- optional timezoneP
-           return (ampm, mbTZ)
-      ]
-    -- And now we can return parsed hour, minute, and second.
+    -- “am”/“pm”. 
+    fromAMPM <- parseAMPM
+    -- Timezone.
+    tz <- optional timezoneP
+    -- And now we can return parsed hour, minute, second, and timezone.
     return (fromAMPM <$> h, m, s, tz)
 
   return $ return
