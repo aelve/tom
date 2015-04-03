@@ -77,7 +77,7 @@ instance Show TDMask where
       (mb 4 year) (mb 2 month) (mb 2 day)
       (maybe "" show weekdays)
       (mb 2 hour) (mb 2 minute) (mb 2 second)
-      (maybe "" (\s -> "(" ++ s ++ ")") timezone)
+      (maybe "" (\s -> "(" ++ olsonToTZName s ++ ")") timezone)
 
 instance Read TDMask where
   readPrec = do
@@ -93,8 +93,11 @@ instance Read TDMask where
     hour   <- wild nonnegative <* lift (string ".")
     minute <- wild nonnegative <* lift (string ":")
     second <- wild nonnegative
-    timezone <- lift $
-      optional $ between (char '(') (char ')') (munch (/= ')'))
+    let parseTZName name = case tzNameToOlson name of
+          Nothing -> fail ("unknown time zone name: '" ++ name ++ "'")
+          Just tz -> return tz
+    timezone <- lift $ optional 
+      (parseTZName =<< between (char '(') (char ')') (munch (/= ')')))
     return TDMask{..}
 
 instance NFData TDMask

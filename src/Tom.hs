@@ -21,14 +21,14 @@ import GHC.Exts (sortWith)
 import Data.Foldable (asum, for_)
 import System.Random
 import Data.Maybe
-import Data.List (find)
+import Data.List (find, isPrefixOf)
 import Control.Exception (evaluate)
 
 import Common
 
--- | A parser for masks ('TDMask'), with a twist – the mask can depend on
--- current time.
-type TDParser = Parser (TZ -> UTCTime -> TDMask)
+-- | A parser for masks ('TDMask'). IO may be needed to query timezones, for
+-- instance.
+type TDParser = Parser (IO TDMask)
 
 -- | A parser for nonnegative integers (0, 1, 2, ...).
 nonnegative :: (Read a, Integral a) => Parser a
@@ -61,6 +61,20 @@ yearP = do
   s <- many1 digit
   return $ if length s < 4 then 2000 + read s else read s
 
+-- | Timezone name parser. Returns already queried Olson name.
+timezoneP :: Parser String
+timezoneP = try $ do
+  -- The main problem is the complication with am|pm – “amz” could mean “am,
+  -- timezone Z”, or it could mean “timezone AMZ”. To solve this, we use the
+  -- fact that all time zones have 3 or more characters, and that there are
+  -- no 5-character time zones starting with “am” or “pm”.
+  name <- many1 letter
+  guard . not $
+    length name >= 5 && any (`isPrefixOf` (map toLower name)) ["am","pm"]
+  case tzNameToOlson name of
+    Nothing -> mzero
+    Just tz -> return tz
+
 {- |
 A parser for moments in time.
 
@@ -73,7 +87,7 @@ Date format:
   * M-D
   * D
 
-Time format: [H][.MM][:SS][am/pm] (all components can be omitted).
+Time format: [H][.MM][:SS][am|pm][timezone] (all components can be omitted).
 
 The next suitable time is always chosen. For instance, if it's past 9pm
 already, then “9pm” will resolve to 9pm of the next day. In the same way,
@@ -81,6 +95,9 @@ already, then “9pm” will resolve to 9pm of the next day. In the same way,
 much as 4 years).
 
 If the resulting time is always in the past, the function will fail.
+
+A timezone can be specified as an abbreviation. At the moment, only a handful
+of abbreviations are supported.
 -}
 momentP :: TDParser
 momentP = do
@@ -99,10 +116,9 @@ momentP = do
     , return (Nothing, Nothing, Nothing)
     ]
 
-  -- Parsing time is more complicated. We parse
-  -- [hour][.minute][:second][am|pm], where every component is
-  -- optional. Luckily, it's easy to distinguish between them.
-  (mbHour, mbMinute, mbSecond) <- do
+  -- We parse [hour][.minute][:second][am|pm][timezone], where every
+  -- component is optional.
+  (mbHour, mbMinute, mbSecond, mbTZ) <- do
     h <- optional nonnegative
     -- If hour is set and minute isn't, it's assumed to be 0, *not*
     -- omitted. For instance, “10am” really means “10.00:00”.
@@ -111,18 +127,30 @@ momentP = do
     -- Same for minute/second.
     s <- Just <$> (char ':' *> nonnegative)           <|>
          pure (if isJust m then Just 0 else Nothing)
-    -- “am”/“pm”
-    fromAMPM <- parseAMPM
+    -- “am”/“pm” and timezone. We try timezone first, because some timezones
+    -- start with “am”/“pm”.
+    (fromAMPM, tz) <- choice
+      [ do tz <- timezoneP
+           return (id, Just tz)
+      , do ampm <- parseAMPM
+           mbTZ <- optional timezoneP
+           return (ampm, mbTZ)
+      ]
     -- And now we can return parsed hour, minute, and second.
-    return (fromAMPM <$> h, m, s)
+    return (fromAMPM <$> h, m, s, tz)
 
   -- Finally, we have to fill in the blanks (“Nothing”) so that the result is
   -- the *least* possible time which is still bigger than the current time.
-  return $ \tz time -> do
-
+  return $ do
+    time <- getCurrentTime
+    localTZ <- loadLocalTZ
+    
     -- The parser returns a function which is given current time and
     -- timezone. We're inside this function now, and we turn given time and
     -- timezone into something more usable – namely, year/month/day/etc.
+    tz <- case mbTZ of
+      Nothing -> return localTZ
+      Just x  -> loadSystemTZ x
     let ((cYear,cMonth,cDay),(cHour,cMinute,cSecond)) = expandTime tz time
 
     -- These are lowest possible second, minute+second, hour+minute+second,
@@ -226,7 +254,7 @@ momentP = do
           fromMaybe 
             (error "Can't be scheduled – time is in the past.")
             (nextYear (cYear, (cMonth, (cDay, (cHour, (cMinute, cSecond))))))
-    TDMask
+    return $ TDMask
       { year     = Just year'
       , month    = Just month'
       , day      = Just day'
@@ -234,7 +262,7 @@ momentP = do
       , minute   = Just minute'
       , second   = Just second'
       , weekdays = Nothing
-      , timezone = Nothing
+      , timezone = mbTZ
       }
 
 {- |
@@ -249,7 +277,7 @@ Date format:
   * M-D
   * D
 
-Time format: [H][.MM][:SS][am/pm] (all components can be omitted).
+Time format: [H][.MM][:SS][am|pm][timezone] (all components can be omitted).
 
 You can use any amount of “x”s instead of a number to specify that it can be
 any number.
@@ -257,7 +285,11 @@ any number.
 Omitted minute/second aren't assumed to be wildcards, so it's safe to do
 “x.30” without it meaning “x.30:x”.
 
-“xpm” does *not* mean “12.00:00–23.59:00”.
+am/pm isn't really part of the mask, so “xpm” does not mean “the 2nd half of
+the day”.
+
+A timezone can be specified as an abbreviation. At the moment, only a handful
+of abbreviations are supported.
 -}
 wildcardP :: TDParser
 wildcardP = do
@@ -280,17 +312,24 @@ wildcardP = do
     , return (Nothing, Nothing, Nothing)
     ]
 
-  -- [hour][.minute][:second][am|pm]
-  (mbHour, mbMinute, mbSecond) <- do
+  -- [hour][.minute][:second][am|pm][timezone]
+  (mbHour, mbMinute, mbSecond, mbTZ) <- do
     h <- option Nothing (wild nonnegative)
     m <- option (Just 0) (char '.' *> wild nonnegative)
     s <- option (Just 0) (char ':' *> wild nonnegative)
-    -- “am”/“pm”
-    fromAMPM <- parseAMPM
+    -- “am”/“pm” and timezone. We try timezone first, because some timezones
+    -- start with “am”/“pm”.
+    (fromAMPM, tz) <- choice
+      [ do tz <- timezoneP
+           return (id, Just tz)
+      , do ampm <- parseAMPM
+           mbTZ <- optional timezoneP
+           return (ampm, mbTZ)
+      ]
     -- And now we can return parsed hour, minute, and second.
-    return (fromAMPM <$> h, m, s)
+    return (fromAMPM <$> h, m, s, tz)
 
-  return $ \_ _ ->
+  return $ return
     TDMask
       { year     = mbYear
       , month    = mbMonth
@@ -299,7 +338,7 @@ wildcardP = do
       , minute   = mbMinute
       , second   = mbSecond
       , weekdays = Nothing
-      , timezone = Nothing
+      , timezone = mbTZ
       }
 
 main = do
@@ -309,15 +348,12 @@ main = do
     else scheduleReminder args
 
 scheduleReminder (dt:msg) = do
-  tz <- loadLocalTZ
   time <- getCurrentTime
   -- Forcing evaluation because otherwise, if something fails, it'll fail
   -- during writing the reminder, and that'd be bad.
-  let
-    maskP    = choice . map (\p -> try (p <* eof)) $
-                 [momentP, wildcardP]
-    maskFunc = either (error . show) id $ parse maskP "" dt
-  mask <- evaluate . force $ maskFunc tz time
+  let maskP = choice . map (\p -> try (p <* eof)) $ [momentP, wildcardP]
+  mask <- evaluate . force =<<
+            either (error . show) id (parse maskP "" dt)
   newUUID <- randomIO
   let reminder = Reminder
         { mask             = mask
