@@ -121,7 +121,7 @@ getDir = do
 withReminderFile action = do
   dir <- getDir
   withFileLock (dir </> "lock") Exclusive $ \_ -> do
-    let fileName = (dir </> "reminders")
+    let fileName = dir </> "reminders"
     ex <- doesFileExist fileName
     unless ex $
       writeFile fileName ""
