@@ -21,7 +21,7 @@ import GHC.Exts (sortWith)
 import Data.Foldable (asum, for_)
 import System.Random
 import Data.Maybe
-import Data.List (find)
+import Data.List (find, isPrefixOf)
 import Control.Exception (evaluate)
 
 import Common
@@ -327,8 +327,8 @@ wildcardP = do
 
 main = do
   args <- getArgs
-  if null args
-    then listReminders
+  if null args || "--" `isPrefixOf` head args
+    then listReminders args
     else scheduleReminder args
 
 scheduleReminder (dt:msg) = do
@@ -350,8 +350,12 @@ scheduleReminder (dt:msg) = do
     appendFile f (show reminder ++ "\n")
     putStrLn "Scheduled a reminder."
 
-listReminders = do
+listReminders args = do
   withReminderFile $ \f -> do
     rs <- readReminders f
-    for_ rs $ \r -> do
+    let rs' = case args of
+                []                 -> rs
+                ["--sort", "ack"]  -> sortWith lastAcknowledged rs
+                ["--sort", "seen"] -> sortWith lastSeen rs
+    for_ rs' $ \r -> do
       putStrLn (show (mask r) ++ ": " ++ message r)
