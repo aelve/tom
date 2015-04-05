@@ -123,25 +123,44 @@ loop alertsRef =
                  Nothing
                  []       -- flags
                  MessageInfo
-                 ButtonsYesNo
+                 ButtonsNone
                  ("Reminder: " ++ message reminder ++ "\n\n" ++
                   "(" ++ show (mask reminder) ++ ")")
+      dialogAddButton alert ("5min later"  :: String) (ResponseUser (5*60))
+      dialogAddButton alert ("1h later"    :: String) (ResponseUser 3600)
+      dialogAddButton alert ("Tomorrow"    :: String) (ResponseUser 86400)
+      dialogAddButton alert ("Turn it off" :: String)  ResponseNo
+      dialogAddButton alert ("Thanks!"     :: String)  ResponseYes
 
       -- Processing a response goes as follows:
       -- 
       -- + lastSeen is updated.
-      -- + On “yes” lastAcknowledged is updated.
-      -- + On “no” the reminder is snoozed for 5min.
+      -- 
+      -- + On “snooze” ignoreUntil is updated.
+      -- + On “turn it off” the reminder is moved into another file.
+      -- + On “thanks” lastAcknowledged is updated.
+      -- + Closing the reminder does nothing extra.
+      -- 
       -- + The alert window is closed.
-      alert `on` response $ \rid -> do
+      alert `on` response $ \responseId -> do
         t <- getCurrentTime
-        withRemindersFile . fmap return $
-          modifyReminder uuid $ \reminder ->
-            if (rid == ResponseYes)
-              then reminder { lastSeen         = t
-                            , lastAcknowledged = t }
-              else reminder { lastSeen         = t
-                            , ignoreUntil      = addUTCTime (5*60) t }
+        withRemindersFile . fmap return $ do
+          -- We don't use the fact that we already have the reminder (r). It
+          -- could change in the file, even tho there's only a second for it
+          -- to happen. So, we're only going to act using reminder's UUID.
+          let snooze s = modifyReminder uuid $ \reminder ->
+                reminder { lastSeen    = t
+                         , ignoreUntil = addUTCTime s t }
+          let thanks   = modifyReminder uuid $ \reminder ->
+                reminder { lastSeen         = t
+                         , lastAcknowledged = t }
+          let seen     = modifyReminder uuid $ \reminder ->
+                reminder { lastSeen = t }
+          case responseId of
+            ResponseUser s -> snooze (fromIntegral s)
+            ResponseYes    -> thanks
+            ResponseNo     -> disableReminder uuid
+            _other         -> seen
         widgetDestroy alert
 
       -- When the alert window is closed, we remove it from the map.
