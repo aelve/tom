@@ -9,10 +9,13 @@
 module Tom.Common
 (
   Reminder(..),
-  withReminderFile,
-  readReminders,
+  RemindersFile(..),
+  readRemindersFile,
+  withRemindersFile,
+  enableReminder,
+  disableReminder,
+  addReminder,
   modifyReminder,
-  modifyReminders,
   reminderInInterval,
 )
 where
@@ -22,25 +25,30 @@ where
 import Control.Applicative
 import Control.Monad
 import Data.Maybe
+import Data.Monoid
 -- Files
-import System.Directory
-import System.FilePath
-import System.FileLock
+import System.Directory                         -- directory
+import System.FilePath                          -- filepath
+import System.FileLock                          -- filelock
 -- ByteString
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+-- Map
+import qualified Data.Map as M
+import Data.Map (Map)
 -- Time
 import Data.Time
 import Data.Time.Calendar.OrdinalDate
-import Data.Time.Zones
+import Data.Time.Zones                          -- tz
 -- UUIDs
-import Data.UUID hiding (null)
+import Data.UUID hiding (null)                  -- uuid
 -- JSON
-import Data.Aeson as Aeson
+import Data.Aeson as Aeson                      -- aeson
+-- Randomness
+import System.Random
 -- Tom-specific
 import Tom.Time
 import Tom.Mask
-
 
 data Reminder = Reminder
   { mask             :: Mask
@@ -48,7 +56,6 @@ data Reminder = Reminder
   , lastSeen         :: UTCTime
   , lastAcknowledged :: UTCTime
   , ignoreUntil      :: UTCTime
-  , uuid             :: UUID
   }
   deriving (Eq, Read, Show)
 
@@ -59,7 +66,6 @@ instance FromJSON Reminder where
     lastSeen         <- o .: "seen"
     lastAcknowledged <- o .: "acknowledged"
     ignoreUntil      <- o .: "ignore-until"
-    uuid             <- read <$> o .: "uuid"
     return Reminder{..}
 
 instance ToJSON Reminder where
@@ -69,7 +75,30 @@ instance ToJSON Reminder where
     , "seen"         .= lastSeen
     , "acknowledged" .= lastAcknowledged
     , "ignore-until" .= ignoreUntil
-    , "uuid"         .= show uuid
+    ]
+
+data RemindersFile = RemindersFile
+  { remindersOn  :: Map UUID Reminder
+  , remindersOff :: Map UUID Reminder
+  }
+  deriving (Read, Show)
+
+nullRemindersFile :: RemindersFile
+nullRemindersFile = RemindersFile
+  { remindersOn  = mempty
+  , remindersOff = mempty
+  }
+
+instance FromJSON RemindersFile where
+  parseJSON = withObject "reminders file" $ \o -> do
+    remindersOn  <- M.mapKeys read <$> o .: "on"
+    remindersOff <- M.mapKeys read <$> o .: "off"
+    return RemindersFile{..}
+
+instance ToJSON RemindersFile where
+  toJSON RemindersFile{..} = object
+    [ "on"  .= M.mapKeys show remindersOn
+    , "off" .= M.mapKeys show remindersOff
     ]
 
 getDir = do
@@ -79,31 +108,56 @@ getDir = do
     createDirectory dir
   return dir
 
-withReminderFile action = do
+readRemindersFile :: IO RemindersFile
+readRemindersFile = do
   dir <- getDir
   withFileLock (dir </> "lock") Exclusive $ \_ -> do
     let fileName = dir </> "reminders"
-    ex <- doesFileExist fileName
-    unless ex $
-      writeFile fileName ""
-    action fileName
+    exists <- doesFileExist fileName
+    when (not exists) $
+      BSL.writeFile fileName (Aeson.encode nullRemindersFile)
+    contents <- BSL.fromStrict <$> BS.readFile fileName
+    let err = error "Can't parse reminders."
+    return $ fromMaybe err (Aeson.decode' contents)
 
--- | Should be called in 'withReminderFile'.
-readReminders :: FilePath -> IO [Reminder]
-readReminders f =
-  fromMaybe (error "can't parse reminders") .
-  Aeson.decode' . BSL.fromStrict <$>
-  BS.readFile f
+withRemindersFile :: (RemindersFile -> IO RemindersFile) -> IO ()
+withRemindersFile func = do
+  dir <- getDir
+  withFileLock (dir </> "lock") Exclusive $ \_ -> do
+    let fileName = dir </> "reminders"
+    exists <- doesFileExist fileName
+    when (not exists) $
+      BSL.writeFile fileName (Aeson.encode nullRemindersFile)
+    contents <- BSL.fromStrict <$> BS.readFile fileName
+    let err  = error "Can't parse reminders."
+        file = fromMaybe err (Aeson.decode' contents)
+    BSL.writeFile fileName . Aeson.encode =<< func file
 
-modifyReminder :: FilePath -> UUID -> (Reminder -> Reminder) -> IO ()
-modifyReminder f u func = modifyReminders f apply
-  where
-    apply = map (\r -> if uuid r == u then func r else r)
+enableReminder :: UUID -> (RemindersFile -> RemindersFile)
+enableReminder u file = fromMaybe file $ do
+  r <- M.lookup u (remindersOff file)
+  return file { remindersOn  = M.insert u r (remindersOn file)
+              , remindersOff = M.delete u (remindersOff file) }
 
-modifyReminders :: FilePath -> ([Reminder] -> [Reminder]) -> IO ()
-modifyReminders f func = do
-  rs <- readReminders f
-  BSL.writeFile f (Aeson.encode (func rs))
+disableReminder :: UUID -> (RemindersFile -> RemindersFile)
+disableReminder u file = fromMaybe file $ do
+  r <- M.lookup u (remindersOn file)
+  return file { remindersOn  = M.delete u (remindersOn file)
+              , remindersOff = M.insert u r (remindersOff file) }
+
+modifyReminder :: UUID -> (Reminder -> Reminder)
+                       -> (RemindersFile -> RemindersFile)
+modifyReminder u f file
+  | M.member u (remindersOn file) =
+      file { remindersOn = M.adjust f u (remindersOn file) }
+  | otherwise =
+      file { remindersOff = M.adjust f u (remindersOff file) }
+
+-- | Add a (turned on) reminder. The UUID will be generated automatically.
+addReminder :: Reminder -> (RemindersFile -> IO RemindersFile)
+addReminder r file = do
+  u <- randomIO
+  return file { remindersOn = M.insert u r (remindersOn file) }
 
 -- | Check whether there's -a moment of time which matches the mask- in a
 -- time interval.

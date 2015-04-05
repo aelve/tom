@@ -6,25 +6,34 @@
   #-}
 
 
+-- General
 import           Control.Applicative
-import           Control.DeepSeq
-import           Control.Exception (evaluate)
 import           Control.Monad
 import           Data.Foldable (asum, for_, traverse_)
-import           Data.IORef
-import           Data.List (find)
-import qualified Data.Map as M
 import           Data.Maybe
+-- Parsing
+import           Text.Parsec hiding ((<|>), optional)
+import           Text.Parsec.String
+-- Lists
+import           Data.List (find)
+import           GHC.Exts (sortWith)
+-- Text
+import           Text.Printf
+-- Map
+import qualified Data.Map as M
+-- Time
 import           Data.Time
 import           Data.Time.Calendar.MonthDay
 import           Data.Time.Zones
-import           GHC.Exts (sortWith)
+-- Strictness
+import           Control.DeepSeq
+import           Control.Exception (evaluate)
+-- GTK
 import           Graphics.UI.Gtk
+-- IO
+import           Data.IORef
 import           System.Environment
-import           System.Random
-import           Text.Parsec hiding ((<|>), optional)
-import           Text.Parsec.String
-
+-- Tom-specific
 import           Tom.Mask
 import           Tom.Common
 
@@ -42,28 +51,29 @@ scheduleReminder (dt:msg) = do
   let maskP = choice . map (\p -> try (p <* eof)) $ [momentP, wildcardP]
   mask <- evaluate . force =<<
             either (error . show) id (parse maskP "" dt)
-  newUUID <- randomIO
   let reminder = Reminder
         { mask             = mask
         , message          = unwords msg
         , lastSeen         = time
         , lastAcknowledged = time
         , ignoreUntil      = time
-        , uuid             = newUUID
         }
-  withReminderFile $ \f -> do
-    modifyReminders f (++ [reminder])
-    putStrLn "Scheduled a reminder."
+  withRemindersFile $ addReminder reminder
+  putStrLn "Scheduled a reminder."
 
 listReminders args = do
-  withReminderFile $ \f -> do
-    rs <- readReminders f
-    let rs' = case args of
-                []                 -> rs
-                ["--sort", "ack"]  -> sortWith lastAcknowledged rs
-                ["--sort", "seen"] -> sortWith lastSeen rs
-    for_ rs' $ \r -> do
-      putStrLn (show (mask r) ++ ": " ++ message r)
+  file <- readRemindersFile 
+  let sortRs = case args of
+        []                 -> id
+        ["--sort", "ack"]  -> sortWith lastAcknowledged
+        ["--sort", "seen"] -> sortWith lastSeen
+  putStrLn "Off:"
+  for_ (sortRs (M.elems (remindersOff file))) $ \r ->
+    printf "  %s: %s\n" (show (mask r)) (message r)
+  putStrLn ""
+  putStrLn "On:"
+  for_ (sortRs (M.elems (remindersOn file))) $ \r ->
+    printf "  %s: %s\n" (show (mask r)) (message r)
 
 daemonMain = do
   alertsRef <- newIORef M.empty
@@ -72,8 +82,7 @@ daemonMain = do
   mainGUI
 
 loop alertsRef =
-  withReminderFile $ \f -> do
-    rs <- readReminders f
+  withRemindersFile $ \file -> do
     t <- getCurrentTime
     tz <- loadLocalTZ
 
@@ -100,14 +109,14 @@ loop alertsRef =
                 , or [ reexpired
                      , forgotten && diffUTCTime t (lastSeen r) >= 5*60 ] ]
 
-    expired <- filterM isExpired rs
-    for_ expired $ \r -> do
-      putStrLn $ "Reminder " ++ show (uuid r) ++ " has expired."
+    expired <- filterM (isExpired . snd) (M.assocs (remindersOn file))
+    for_ expired $ \(uuid, reminder) -> do
+      putStrLn $ "Reminder " ++ show uuid ++ " has expired."
 
       -- If the old alert window is still hanging around, close it.
-      mbOldDialog <- M.lookup (uuid r) <$> readIORef alertsRef
+      mbOldDialog <- M.lookup uuid <$> readIORef alertsRef
       traverse_ widgetDestroy mbOldDialog
-      modifyIORef' alertsRef (M.delete (uuid r))
+      modifyIORef' alertsRef (M.delete uuid)
 
       -- Create another alert window.
       alert <- messageDialogNew
@@ -115,8 +124,8 @@ loop alertsRef =
                  []       -- flags
                  MessageInfo
                  ButtonsYesNo
-                 ("Reminder: " ++ message r ++ "\n\n" ++
-                  "(" ++ show (mask r) ++ ")")
+                 ("Reminder: " ++ message reminder ++ "\n\n" ++
+                  "(" ++ show (mask reminder) ++ ")")
 
       -- Processing a response goes as follows:
       -- 
@@ -126,8 +135,8 @@ loop alertsRef =
       -- + The alert window is closed.
       alert `on` response $ \rid -> do
         t <- getCurrentTime
-        withReminderFile $ \f ->
-          modifyReminder f (uuid r) $ \reminder ->
+        withRemindersFile . fmap return $
+          modifyReminder uuid $ \reminder ->
             if (rid == ResponseYes)
               then reminder { lastSeen         = t
                             , lastAcknowledged = t }
@@ -137,12 +146,14 @@ loop alertsRef =
 
       -- When the alert window is closed, we remove it from the map.
       alert `after` objectDestroy $ do
-        modifyIORef' alertsRef (M.delete (uuid r))
+        modifyIORef' alertsRef (M.delete uuid)
 
       -- Add the alert to the map.
-      modifyIORef' alertsRef (M.insert (uuid r) alert)
+      modifyIORef' alertsRef (M.insert uuid alert)
 
       -- Show the alert.
       widgetShow alert
-      modifyReminder f (uuid r) $ \reminder -> reminder
-        { lastSeen = t }
+
+    -- Finally, lastSeen of all snown reminders must be updated.
+    let expired' = fmap (\r -> r { lastSeen = t }) (M.fromList expired)
+    return file { remindersOn = M.union expired' (remindersOn file) }
