@@ -9,15 +9,11 @@
 module Tom.Common
 (
   Reminder(..),
-  getDir,
   withReminderFile,
   readReminders,
   modifyReminder,
   modifyReminders,
-  expandTime,
   reminderInInterval,
-  tzNameToOlson,
-  olsonToTZName,
 )
 where
 
