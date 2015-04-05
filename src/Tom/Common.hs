@@ -47,6 +47,7 @@ data Reminder = Reminder
   , message          :: String
   , lastSeen         :: UTCTime
   , lastAcknowledged :: UTCTime
+  , ignoreUntil      :: UTCTime
   , uuid             :: UUID
   }
   deriving (Eq, Read, Show)
@@ -57,6 +58,7 @@ instance FromJSON Reminder where
     message          <- o .: "message"
     lastSeen         <- o .: "seen"
     lastAcknowledged <- o .: "acknowledged"
+    ignoreUntil      <- o .: "ignore-until"
     uuid             <- read <$> o .: "uuid"
     return Reminder{..}
 
@@ -66,6 +68,7 @@ instance ToJSON Reminder where
     , "message"      .= message
     , "seen"         .= lastSeen
     , "acknowledged" .= lastAcknowledged
+    , "ignore-until" .= ignoreUntil
     , "uuid"         .= show uuid
     ]
 

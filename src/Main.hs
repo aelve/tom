@@ -48,6 +48,7 @@ scheduleReminder (dt:msg) = do
         , message          = unwords msg
         , lastSeen         = time
         , lastAcknowledged = time
+        , ignoreUntil      = time
         , uuid             = newUUID
         }
   withReminderFile $ \f -> do
@@ -76,19 +77,28 @@ loop alertsRef =
     t <- getCurrentTime
     tz <- loadLocalTZ
 
-    -- We show a reminder if either holds:
+    -- We want the following behavior:
     -- 
-    -- a) It got expired since the moment it was seen.
+    -- + When a reminder is shown and ignored, it's shown again in 5min
+    -- (unless it gets expired again earlier than that – e.g. if it is set to
+    -- be shown every minute).
     -- 
-    -- b) It got expired since the moment it was last acknowledged, and it
-    -- was seen more than 5min ago. So, it'll be shown every 5min if you keep
-    -- not acknowledging it.
+    -- + When a reminder is shown and snoozed, it's not shown again until the
+    -- snooze interval ends, even if it gets expired again in that period.
+    -- 
+    -- So, we show a reminder if it's not snoozed and if either holds:
+    -- 
+    -- + It got expired since the moment it was seen.
+    -- 
+    -- + It got expired since the moment it was last acknowledged, and it was
+    -- seen more than 5min ago.
     let isExpired r = do
           reexpired <- reminderInInterval (lastSeen r) t (mask r)
           forgotten <- reminderInInterval (lastAcknowledged r) t (mask r)
           return $
-            reexpired ||
-            forgotten && diffUTCTime t (lastSeen r) >= 5*60
+            and [ t >= ignoreUntil r
+                , or [ reexpired
+                     , forgotten && diffUTCTime t (lastSeen r) >= 5*60 ] ]
 
     expired <- filterM isExpired rs
     for_ expired $ \r -> do
@@ -108,8 +118,12 @@ loop alertsRef =
                  ("Reminder: " ++ message r ++ "\n\n" ++
                   "(" ++ show (mask r) ++ ")")
 
-      -- When we get a response, we just update “last seen” and “last
-      -- acknowledged” fields and close the alert window.
+      -- Processing a response goes as follows:
+      -- 
+      -- + lastSeen is updated.
+      -- + On “yes” lastAcknowledged is updated.
+      -- + On “no” the reminder is snoozed for 5min.
+      -- + The alert window is closed.
       alert `on` response $ \rid -> do
         t <- getCurrentTime
         withReminderFile $ \f ->
@@ -117,7 +131,8 @@ loop alertsRef =
             if (rid == ResponseYes)
               then reminder { lastSeen         = t
                             , lastAcknowledged = t }
-              else reminder { lastSeen         = t }
+              else reminder { lastSeen         = t
+                            , ignoreUntil      = addUTCTime (5*60) t }
         widgetDestroy alert
 
       -- When the alert window is closed, we remove it from the map.
