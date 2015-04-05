@@ -2,7 +2,9 @@
   RecordWildCards
 , ViewPatterns
 , DeriveGeneric
+, OverloadedStrings
   #-}
+
 
 module Tom.Common
 (
@@ -11,6 +13,7 @@ module Tom.Common
   withReminderFile,
   readReminders,
   modifyReminder,
+  modifyReminders,
   expandTime,
   reminderInInterval,
   tzNameToOlson,
@@ -18,20 +21,30 @@ module Tom.Common
 )
 where
 
+
+-- General
 import Control.Applicative
 import Control.Monad
+import Data.Maybe
+-- Files
 import System.Directory
 import System.FilePath
 import System.FileLock
+-- ByteString
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
+-- Time
 import Data.Time
 import Data.Time.Calendar.OrdinalDate
 import Data.Time.Zones
-import qualified System.IO.Strict as Strict
-import Data.Maybe
+-- UUIDs
 import Data.UUID hiding (null)
-
+-- JSON
+import Data.Aeson as Aeson
+-- Tom-specific
 import Tom.Time
 import Tom.Mask
+
 
 data Reminder = Reminder
   { mask             :: Mask
@@ -41,6 +54,24 @@ data Reminder = Reminder
   , uuid             :: UUID
   }
   deriving (Eq, Read, Show)
+
+instance FromJSON Reminder where
+  parseJSON = withObject "reminder" $ \o -> do
+    mask             <- read <$> o .: "mask"
+    message          <- o .: "message"
+    lastSeen         <- o .: "seen"
+    lastAcknowledged <- o .: "acknowledged"
+    uuid             <- read <$> o .: "uuid"
+    return Reminder{..}
+
+instance ToJSON Reminder where
+  toJSON Reminder{..} = object
+    [ "mask"         .= show mask
+    , "message"      .= message
+    , "seen"         .= lastSeen
+    , "acknowledged" .= lastAcknowledged
+    , "uuid"         .= show uuid
+    ]
 
 getDir = do
   dir <- getAppUserDataDirectory "aelve/tom"
@@ -60,13 +91,20 @@ withReminderFile action = do
 
 -- | Should be called in 'withReminderFile'.
 readReminders :: FilePath -> IO [Reminder]
-readReminders f = map read . lines <$> Strict.readFile f
+readReminders f =
+  fromMaybe (error "can't parse reminders") .
+  Aeson.decode' . BSL.fromStrict <$>
+  BS.readFile f
 
 modifyReminder :: FilePath -> UUID -> (Reminder -> Reminder) -> IO ()
-modifyReminder f u func = do
+modifyReminder f u func = modifyReminders f apply
+  where
+    apply = map (\r -> if uuid r == u then func r else r)
+
+modifyReminders :: FilePath -> ([Reminder] -> [Reminder]) -> IO ()
+modifyReminders f func = do
   rs <- readReminders f
-  let rs' = map (\r -> if uuid r == u then func r else r) rs
-  writeFile f (unlines (map show rs'))
+  BSL.writeFile f (Aeson.encode (func rs))
 
 -- | Check whether there's -a moment of time which matches the mask- in a
 -- time interval.

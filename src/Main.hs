@@ -51,7 +51,7 @@ scheduleReminder (dt:msg) = do
         , uuid             = newUUID
         }
   withReminderFile $ \f -> do
-    appendFile f (show reminder ++ "\n")
+    modifyReminders f (++ [reminder])
     putStrLn "Scheduled a reminder."
 
 listReminders args = do
