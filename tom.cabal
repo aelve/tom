@@ -12,29 +12,14 @@ build-type:          Simple
 -- extra-source-files:  
 cabal-version:       >=1.10
 
-executable tom-daemon
-  main-is:             Daemon.hs
-  other-modules:       Common
-  -- other-extensions:    
-  build-depends:       base >=4.7 && <4.8
-                     , deepseq
-                     , containers
-                     , directory
-                     , filelock
-                     , filepath
-                     , gtk3 >= 0.13
-                     , strict
-                     , time >= 1.4
-                     , tz
-                     , uuid
-  hs-source-dirs:      src
-  default-language:    Haskell2010
-
 executable tom
-  main-is:             Tom.hs
-  other-modules:       Common
+  main-is:             Main.hs
+  other-modules:       Tom.Common
+                       Tom.Mask
+                       Tom.Time
   -- other-extensions:    
-  build-depends:       base >=4.7 && <4.8
+  build-depends:       base >= 4.7 && < 4.8
+                     , containers
                      , deepseq
                      , directory
                      , filelock
@@ -45,5 +30,6 @@ executable tom
                      , time >= 1.4
                      , tz
                      , uuid
+                     , gtk3 >= 0.13
   hs-source-dirs:      src
   default-language:    Haskell2010

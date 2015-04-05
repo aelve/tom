@@ -1,38 +1,125 @@
 {-# LANGUAGE
-      ViewPatterns
-    , BangPatterns
-    , TupleSections
+  RecordWildCards
+, DeriveGeneric
+, TupleSections
   #-}
 
-import Data.Char
+
+module Tom.Mask
+(
+  Mask(..),
+  momentP,
+  wildcardP,
+)
+where
+
+
+-- General
 import Control.Applicative
-import System.FilePath
-import System.Directory
+import Control.Monad
+import Data.Foldable (asum)
+import Data.Maybe
+-- Lists
+import Data.List (find)
+-- Parsing (Read)
+import Text.Read (Read(..))
+import qualified Text.Read as Read (lift)
+import qualified Text.ParserCombinators.ReadP as ReadP hiding (optional)
+import Text.ParserCombinators.ReadPrec (ReadPrec)
+-- Parsing (Parsec); this one is used more and thus imported unqualified
+import Text.Parsec hiding (optional, (<|>))
+import Text.Parsec.String
+-- Strictness
+import Control.DeepSeq
+-- Text
+import Text.Printf
+-- Generics (used to autoderive NFData)
+import GHC.Generics
+-- Time
 import Data.Time
 import Data.Time.Calendar.MonthDay
 import Data.Time.Zones
-import System.Environment
-import System.FileLock
-import Control.Monad
-import Text.Parsec hiding ((<|>), optional)
-import Text.Parsec.String
-import Control.DeepSeq
-import GHC.Exts (sortWith)
-import Data.Foldable (asum, for_)
-import System.Random
-import Data.Maybe
-import Data.List (find, isPrefixOf)
-import Control.Exception (evaluate)
+-- Tom-specific
+import Tom.Time
 
-import Common
 
--- | A parser for masks ('TDMask'). IO may be needed to query timezones, for
+data Mask = Mask
+  { year     :: Maybe Integer
+  , month    :: Maybe Int
+  , day      :: Maybe Int
+  , hour     :: Maybe Int
+  , minute   :: Maybe Int
+  , second   :: Maybe Int
+  , weekdays :: Maybe [Int]     -- ^ Numbers between 1 and 7.
+  , timezone :: Maybe String    -- ^ 'Nothing' = always use local timezone.
+  }
+  deriving (Eq, Generic)
+
+-- Examples of format used by Read and Show instances of Mask:
+-- 
+--   - xxxx-xx-03,13.xx:56
+--   - 2015-xx-xx[6,7],12.00:00(UTC)
+
+instance Show Mask where
+  show Mask{..} = do
+    -- Show something with padding. If not set, show some “x”s; if set, show
+    -- and pad with zeroes.
+    -- 
+    -- >>> mb 2 Nothing
+    -- "xx"
+    -- 
+    -- >>> mb 2 (Just 3)
+    -- "03"
+    let mb :: (Show a, Integral a) => Int -> Maybe a -> String
+        mb n Nothing  = replicate n 'x'
+        mb n (Just x) = let s = show x
+                        in  replicate (n - length s) '0' ++ s
+    printf "%s-%s-%s%s,%s.%s:%s%s"
+      (mb 4 year) (mb 2 month) (mb 2 day)
+      (maybe "" show weekdays)
+      (mb 2 hour) (mb 2 minute) (mb 2 second)
+      (maybe "" (\s -> "(" ++ olsonToTZName s ++ ")") timezone)
+
+instance Read Mask where
+  readPrec = do
+    -- Some local definitions to make life easier (since Parsec steals
+    -- ReadP's names).
+    let lift       = Read.lift
+        char       = ReadP.char
+        between    = ReadP.between
+        munch      = ReadP.munch
+        string     = ReadP.string
+        satisfy    = ReadP.satisfy
+        skipSpaces = ReadP.skipSpaces
+    -- Okay, here goes.
+    lift skipSpaces
+    let wild p = lift (some (char 'x') *> pure Nothing) <|> (Just <$> p)
+    let nonnegative :: (Integral a, Read a) => ReadPrec a
+        nonnegative = lift $ read <$> some (satisfy (`elem` ['0'..'9']))
+    year  <- wild nonnegative <* lift (string "-")
+    month <- wild nonnegative <* lift (string "-")
+    day   <- wild nonnegative
+    weekdays <- optional readPrec
+    lift (string ",")
+    hour   <- wild nonnegative <* lift (string ".")
+    minute <- wild nonnegative <* lift (string ":")
+    second <- wild nonnegative
+    let parseTZName name = case tzNameToOlson name of
+          Nothing -> fail ("unknown time zone name: '" ++ name ++ "'")
+          Just tz -> return tz
+    timezone <- lift . optional $
+      parseTZName =<< between (char '(') (char ')') (munch (/= ')'))
+    return Mask{..}
+
+instance NFData Mask
+
+-- | A parser for masks ('Mask'). IO may be needed to query timezones, for
 -- instance.
-type TDParser = Parser (IO TDMask)
+type MaskParser = Parser (IO Mask)
 
 -- | A parser for nonnegative integers (0, 1, 2, ...).
 nonnegative :: (Read a, Integral a) => Parser a
-nonnegative = read <$> many1 digit
+nonnegative = read <$> some digit
 
 -- | A parser for “am”/“pm”, returning the function to apply to hours to get
 -- the corrected version.
@@ -58,13 +145,13 @@ Parses year, accounting for the “assume current millenium” shortcut.
 -}
 yearP :: Parser Integer
 yearP = do
-  s <- many1 digit
+  s <- some digit
   return $ if length s < 4 then 2000 + read s else read s
 
 -- | Timezone name parser. Returns already queried Olson name.
 timezoneP :: Parser String
 timezoneP = do
-  name <- many1 (letter <|> digit <|> oneOf "-+")
+  name <- some (letter <|> digit <|> oneOf "-+")
   case tzNameToOlson name of
     Nothing -> mzero
     Just tz -> return tz
@@ -93,7 +180,7 @@ If the resulting time is always in the past, the function will fail.
 A timezone can be specified as an abbreviation. At the moment, only a handful
 of abbreviations are supported.
 -}
-momentP :: TDParser
+momentP :: MaskParser
 momentP = do
   -- Parsing date: it's either “Y-M-D”, “M-D”, “D”, or nothing (and then
   -- there is no comma). We use Just to denote that year/month/day is set.
@@ -243,7 +330,7 @@ momentP = do
           fromMaybe 
             (error "Can't be scheduled – time is in the past.")
             (nextYear (cYear, (cMonth, (cDay, (cHour, (cMinute, cSecond))))))
-    return $ TDMask
+    return $ Mask
       { year     = Just year'
       , month    = Just month'
       , day      = Just day'
@@ -280,11 +367,11 @@ the day”.
 A timezone can be specified as an abbreviation. At the moment, only a handful
 of abbreviations are supported.
 -}
-wildcardP :: TDParser
+wildcardP :: MaskParser
 wildcardP = do
   -- A function to turn any parser into a parser which accepts a wildcard
   -- (and returns Nothing in that case).
-  let wild p = (many1 (char 'x') *> pure Nothing) <|> (Just <$> p)
+  let wild p = (some (char 'x') *> pure Nothing) <|> (Just <$> p)
 
   -- Parsing date: it's either “Y-M-D”, “M-D”, “D”, or nothing (and then
   -- there is no comma).
@@ -314,7 +401,7 @@ wildcardP = do
     return (fromAMPM <$> h, m, s, tz)
 
   return $ return
-    TDMask
+    Mask
       { year     = mbYear
       , month    = mbMonth
       , day      = mbDay
@@ -324,38 +411,3 @@ wildcardP = do
       , weekdays = Nothing
       , timezone = mbTZ
       }
-
-main = do
-  args <- getArgs
-  if null args || "--" `isPrefixOf` head args
-    then listReminders args
-    else scheduleReminder args
-
-scheduleReminder (dt:msg) = do
-  time <- getCurrentTime
-  -- Forcing evaluation because otherwise, if something fails, it'll fail
-  -- during writing the reminder, and that'd be bad.
-  let maskP = choice . map (\p -> try (p <* eof)) $ [momentP, wildcardP]
-  mask <- evaluate . force =<<
-            either (error . show) id (parse maskP "" dt)
-  newUUID <- randomIO
-  let reminder = Reminder
-        { mask             = mask
-        , message          = unwords msg
-        , lastSeen         = time
-        , lastAcknowledged = time
-        , uuid             = newUUID
-        }
-  withReminderFile $ \f -> do
-    appendFile f (show reminder ++ "\n")
-    putStrLn "Scheduled a reminder."
-
-listReminders args = do
-  withReminderFile $ \f -> do
-    rs <- readReminders f
-    let rs' = case args of
-                []                 -> rs
-                ["--sort", "ack"]  -> sortWith lastAcknowledged rs
-                ["--sort", "seen"] -> sortWith lastSeen rs
-    for_ rs' $ \r -> do
-      putStrLn (show (mask r) ++ ": " ++ message r)

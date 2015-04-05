@@ -1,18 +1,70 @@
-import Control.Applicative
-import Data.Foldable (for_, traverse_)
-import Data.Time
-import Data.Time.Zones
-import Data.Fixed
-import Control.Monad
-import Data.List
-import Graphics.UI.Gtk
-import Data.IORef
-import qualified Data.Map as M
-import Debug.Trace
+{-# LANGUAGE
+  ViewPatterns
+, BangPatterns
+, TupleSections
+, MultiWayIf
+  #-}
 
-import Common
+
+import           Control.Applicative
+import           Control.DeepSeq
+import           Control.Exception (evaluate)
+import           Control.Monad
+import           Data.Foldable (asum, for_, traverse_)
+import           Data.IORef
+import           Data.List (find)
+import qualified Data.Map as M
+import           Data.Maybe
+import           Data.Time
+import           Data.Time.Calendar.MonthDay
+import           Data.Time.Zones
+import           GHC.Exts (sortWith)
+import           Graphics.UI.Gtk
+import           System.Environment
+import           System.Random
+import           Text.Parsec hiding ((<|>), optional)
+import           Text.Parsec.String
+
+import           Tom.Mask
+import           Tom.Common
+
 
 main = do
+  args <- getArgs
+  if | null args || head args == "--sort" -> listReminders args
+     | head args == "--daemon"            -> daemonMain
+     | otherwise                          -> scheduleReminder args
+
+scheduleReminder (dt:msg) = do
+  time <- getCurrentTime
+  -- Forcing evaluation because otherwise, if something fails, it'll fail
+  -- during writing the reminder, and that'd be bad.
+  let maskP = choice . map (\p -> try (p <* eof)) $ [momentP, wildcardP]
+  mask <- evaluate . force =<<
+            either (error . show) id (parse maskP "" dt)
+  newUUID <- randomIO
+  let reminder = Reminder
+        { mask             = mask
+        , message          = unwords msg
+        , lastSeen         = time
+        , lastAcknowledged = time
+        , uuid             = newUUID
+        }
+  withReminderFile $ \f -> do
+    appendFile f (show reminder ++ "\n")
+    putStrLn "Scheduled a reminder."
+
+listReminders args = do
+  withReminderFile $ \f -> do
+    rs <- readReminders f
+    let rs' = case args of
+                []                 -> rs
+                ["--sort", "ack"]  -> sortWith lastAcknowledged rs
+                ["--sort", "seen"] -> sortWith lastSeen rs
+    for_ rs' $ \r -> do
+      putStrLn (show (mask r) ++ ": " ++ message r)
+
+daemonMain = do
   alertsRef <- newIORef M.empty
   initGUI
   timeoutAdd (loop alertsRef >> return True) 1000  -- Repeat every 1s.
