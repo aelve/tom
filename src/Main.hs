@@ -126,11 +126,12 @@ loop alertsRef =
                  ButtonsNone
                  ("Reminder: " ++ message reminder ++ "\n\n" ++
                   "(" ++ show (mask reminder) ++ ")")
-      dialogAddButton alert ("5min later"  :: String) (ResponseUser (5*60))
-      dialogAddButton alert ("1h later"    :: String) (ResponseUser 3600)
-      dialogAddButton alert ("Tomorrow"    :: String) (ResponseUser 86400)
-      dialogAddButton alert ("Turn it off" :: String)  ResponseNo
-      dialogAddButton alert ("Thanks!"     :: String)  ResponseYes
+      mapM_ (uncurry (dialogAddButton alert))
+        [ ("5min later" :: String, ResponseUser 300  )
+        , ("1h later"            , ResponseUser 3600 )
+        , ("12h later"           , ResponseUser 43200)
+        , ("Turn it off"         , ResponseNo        )
+        , ("Thanks!"             , ResponseYes       ) ]
 
       -- Processing a response goes as follows:
       -- 
