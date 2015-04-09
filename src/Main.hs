@@ -54,6 +54,7 @@ scheduleReminder (dt:msg) = do
   let reminder = Reminder
         { mask             = mask
         , message          = unwords msg
+        , created          = time
         , lastSeen         = time
         , lastAcknowledged = time
         , ignoreUntil      = time

@@ -50,9 +50,11 @@ import System.Random
 import Tom.Time
 import Tom.Mask
 
+
 data Reminder = Reminder
   { mask             :: Mask
   , message          :: String
+  , created          :: UTCTime
   , lastSeen         :: UTCTime
   , lastAcknowledged :: UTCTime
   , ignoreUntil      :: UTCTime
@@ -63,6 +65,7 @@ instance FromJSON Reminder where
   parseJSON = withObject "reminder" $ \o -> do
     mask             <- read <$> o .: "mask"
     message          <- o .: "message"
+    created          <- o .: "created"
     lastSeen         <- o .: "seen"
     lastAcknowledged <- o .: "acknowledged"
     ignoreUntil      <- o .: "ignore-until"
@@ -72,6 +75,7 @@ instance ToJSON Reminder where
   toJSON Reminder{..} = object
     [ "mask"         .= show mask
     , "message"      .= message
+    , "created"      .= created
     , "seen"         .= lastSeen
     , "acknowledged" .= lastAcknowledged
     , "ignore-until" .= ignoreUntil
