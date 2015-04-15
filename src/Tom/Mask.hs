@@ -160,7 +160,7 @@ timezoneP = do
 A parser for moments in time.
 
 All numbers can be specified using any amount of digits. Date and time are
-separated with a comma. Date can be omitted.
+separated with a slash. Date can be omitted.
 
 Date format:
 
@@ -168,11 +168,11 @@ Date format:
   * M-D
   * D
 
-Time format: [H][.MM][:SS][am|pm][timezone] (all components can be omitted).
+Time format: [H][.MM][:SS][am|pm][,timezone] (all components can be omitted).
 
 The next suitable time is always chosen. For instance, if it's past 9pm
 already, then “9pm” will resolve to 9pm of the next day. In the same way,
-“2-29,8am” refers to morning of the next February 29 (which may happen in as
+“2-29/8am” refers to morning of the next February 29 (which may happen in as
 much as 4 years).
 
 If the resulting time is always in the past, the function will fail.
@@ -183,21 +183,21 @@ of abbreviations are supported.
 momentP :: MaskParser
 momentP = do
   -- Parsing date: it's either “Y-M-D”, “M-D”, “D”, or nothing (and then
-  -- there is no comma). We use Just to denote that year/month/day is set.
+  -- there is no slash). We use Just to denote that year/month/day is set.
   (mbYear, mbMonth, mbDay) <- choice $ map try
     [ do y <- yearP       <* string "-"
          m <- nonnegative <* string "-"
-         d <- nonnegative <* string ","
+         d <- nonnegative <* string "/"
          return (Just y, Just m, Just d)
     , do m <- nonnegative <* string "-"
-         d <- nonnegative <* string ","
+         d <- nonnegative <* string "/"
          return (Nothing, Just m, Just d)
-    , do d <- nonnegative <* string ","
+    , do d <- nonnegative <* string "/"
          return (Nothing, Nothing, Just d)
     , return (Nothing, Nothing, Nothing)
     ]
 
-  -- We parse [hour][.minute][:second][am|pm][timezone], where every
+  -- We parse [hour][.minute][:second][am|pm][,timezone], where every
   -- component is optional.
   (mbHour, mbMinute, mbSecond, mbTZ) <- do
     h <- optional nonnegative
@@ -211,7 +211,7 @@ momentP = do
     -- “am”/“pm”. 
     fromAMPM <- parseAMPM
     -- Timezone.
-    tz <- optional timezoneP
+    tz <- optional (string "," *> timezoneP)
     -- And now we can return parsed hour, minute, second, and timezone.
     return (fromAMPM <$> h, m, s, tz)
 
@@ -345,7 +345,7 @@ momentP = do
 A parser for masks with wildcards.
 
 All numbers can be specified using any amount of digits. Date and time are
-separated with a comma. Date can be omitted.
+separated with a slash. Date can be omitted.
 
 Date format:
 
@@ -353,7 +353,7 @@ Date format:
   * M-D
   * D
 
-Time format: [H][.MM][:SS][am|pm][timezone] (all components can be omitted).
+Time format: [H][.MM][:SS][am|pm][,timezone] (all components can be omitted).
 
 You can use any amount of “x”s instead of a number to specify that it can be
 any number.
@@ -374,21 +374,21 @@ wildcardP = do
   let wild p = (some (char 'x') *> pure Nothing) <|> (Just <$> p)
 
   -- Parsing date: it's either “Y-M-D”, “M-D”, “D”, or nothing (and then
-  -- there is no comma).
+  -- there is no slash).
   (mbYear, mbMonth, mbDay) <- choice $ map try
     [ do y <- wild yearP       <* string "-"
          m <- wild nonnegative <* string "-"
-         d <- wild nonnegative <* string ","
+         d <- wild nonnegative <* string "/"
          return (y, m, d)
     , do m <- wild nonnegative <* string "-"
-         d <- wild nonnegative <* string ","
+         d <- wild nonnegative <* string "/"
          return (Nothing, m, d)
-    , do d <- wild nonnegative <* string ","
+    , do d <- wild nonnegative <* string "/"
          return (Nothing, Nothing, d)
     , return (Nothing, Nothing, Nothing)
     ]
 
-  -- [hour][.minute][:second][am|pm][timezone]
+  -- [hour][.minute][:second][am|pm][,timezone]
   (mbHour, mbMinute, mbSecond, mbTZ) <- do
     h <- option Nothing (wild nonnegative)
     m <- option (Just 0) (char '.' *> wild nonnegative)
@@ -396,7 +396,7 @@ wildcardP = do
     -- “am”/“pm”. 
     fromAMPM <- parseAMPM
     -- Timezone.
-    tz <- optional timezoneP
+    tz <- optional (string "," *> timezoneP)
     -- And now we can return parsed hour, minute, second, and timezone.
     return (fromAMPM <$> h, m, s, tz)
 
