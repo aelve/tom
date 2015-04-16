@@ -128,14 +128,21 @@ withRemindersFile :: (RemindersFile -> IO RemindersFile) -> IO ()
 withRemindersFile func = do
   dir <- getDir
   withFileLock (dir </> "lock") Exclusive $ \_ -> do
-    let fileName = dir </> "reminders"
-    exists <- doesFileExist fileName
+    let remFile = dir </> "reminders"
+    exists <- doesFileExist remFile
     when (not exists) $
-      BSL.writeFile fileName (Aeson.encode nullRemindersFile)
-    contents <- BSL.fromStrict <$> BS.readFile fileName
+      BSL.writeFile remFile (Aeson.encode nullRemindersFile)
+    contents <- BSL.fromStrict <$> BS.readFile remFile
     let err  = error "Can't parse reminders."
         file = fromMaybe err (Aeson.decode' contents)
-    BSL.writeFile fileName . Aeson.encode =<< func file
+    -- Just writing encoded data to the file isn't safe, because if something
+    -- happens while we're writing (such as power outage), we risk losing all
+    -- reminders. So, instead we're going to write into a *different* file,
+    -- and then atomically (or so documentation for 'renameFile' claims)
+    -- rename the new one into the old one.
+    let newFile = dir </> "reminders-new"
+    BSL.writeFile newFile . Aeson.encode =<< func file
+    renameFile newFile remFile
 
 enableReminder :: UUID -> (RemindersFile -> RemindersFile)
 enableReminder u file = fromMaybe file $ do
