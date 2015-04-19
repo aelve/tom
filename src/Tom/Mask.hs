@@ -8,8 +8,10 @@
 module Tom.Mask
 (
   Mask(..),
+  allMaskParsers,
   momentP,
   wildcardP,
+  durationP,
 )
 where
 
@@ -116,6 +118,10 @@ instance NFData Mask
 -- | A parser for masks ('Mask'). IO may be needed to query timezones, for
 -- instance.
 type MaskParser = Parser (IO Mask)
+
+-- | All mask parsers exported by this module.
+allMaskParsers :: [MaskParser]
+allMaskParsers = [momentP, wildcardP, durationP]
 
 -- | A parser for nonnegative integers (0, 1, 2, ...).
 nonnegative :: (Read a, Integral a) => Parser a
@@ -410,4 +416,38 @@ wildcardP = do
       , second   = mbSecond
       , weekdays = Nothing
       , timezone = mbTZ
+      }
+
+{- |
+A parser for time durations (like “1h20m”).
+
+A string it parses consists of a sequence of things, each being a number
+followed by one of:
+
+  * “h” (hours)
+  * “m” (minutes)
+  * “s” (seconds)
+-}
+durationP :: MaskParser
+durationP = do
+  let thingP = do
+        n <- nonnegative
+        choice [
+          string "h" *> pure (n*3600),
+          string "m" *> pure (n*60),
+          string "s" *> pure n ]
+  total <- sum <$> many1 thingP
+  return $ do
+    time <- getCurrentTime
+    let ((cYear,cMonth,cDay),(cHour,cMinute,cSecond)) =
+          expandTime utcTZ (addUTCTime (fromIntegral total) time)
+    return Mask
+      { year     = Just cYear
+      , month    = Just cMonth
+      , day      = Just cDay
+      , hour     = Just cHour
+      , minute   = Just cMinute
+      , second   = Just cSecond
+      , weekdays = Nothing
+      , timezone = tzNameToOlson "UTC"
       }

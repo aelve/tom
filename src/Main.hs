@@ -48,7 +48,7 @@ scheduleReminder (dt:msg) = do
   time <- getCurrentTime
   -- Forcing evaluation because otherwise, if something fails, it'll fail
   -- during writing the reminder, and that'd be bad.
-  let maskP = choice . map (\p -> try (p <* eof)) $ [momentP, wildcardP]
+  let maskP = choice $ map (\p -> try (p <* eof)) allMaskParsers
   mask <- evaluate . force =<<
             either (error . show) id (parse maskP "" dt)
   let reminder = Reminder
