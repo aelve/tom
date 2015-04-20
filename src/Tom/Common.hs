@@ -27,9 +27,9 @@ import Control.Monad
 import Data.Maybe
 import Data.Monoid
 -- Files
-import System.Directory                         -- directory
-import System.FilePath                          -- filepath
-import System.FileLock                          -- filelock
+import System.Directory                             -- directory
+import System.FilePath                              -- filepath
+import System.FileLock                              -- filelock
 -- ByteString
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -39,11 +39,12 @@ import Data.Map (Map)
 -- Time
 import Data.Time
 import Data.Time.Calendar.OrdinalDate
-import Data.Time.Zones                          -- tz
+import Data.Time.Zones                              -- tz
 -- UUIDs
-import Data.UUID hiding (null)                  -- uuid
+import Data.UUID hiding (null)                      -- uuid
 -- JSON
-import Data.Aeson as Aeson                      -- aeson
+import Data.Aeson as Aeson                          -- aeson
+import qualified Data.Aeson.Encode.Pretty as Aeson  -- aeson-pretty
 -- Randomness
 import System.Random
 -- Tom-specific
@@ -119,7 +120,7 @@ readRemindersFile = do
     let fileName = dir </> "reminders"
     exists <- doesFileExist fileName
     when (not exists) $
-      BSL.writeFile fileName (Aeson.encode nullRemindersFile)
+      BSL.writeFile fileName (Aeson.encodePretty nullRemindersFile)
     contents <- BSL.fromStrict <$> BS.readFile fileName
     let err = error "Can't parse reminders."
     return $ fromMaybe err (Aeson.decode' contents)
@@ -131,7 +132,7 @@ withRemindersFile func = do
     let remFile = dir </> "reminders"
     exists <- doesFileExist remFile
     when (not exists) $
-      BSL.writeFile remFile (Aeson.encode nullRemindersFile)
+      BSL.writeFile remFile (Aeson.encodePretty nullRemindersFile)
     contents <- BSL.fromStrict <$> BS.readFile remFile
     let err  = error "Can't parse reminders."
         file = fromMaybe err (Aeson.decode' contents)
@@ -141,7 +142,7 @@ withRemindersFile func = do
     -- and then atomically (or so documentation for 'renameFile' claims)
     -- rename the new one into the old one.
     let newFile = dir </> "reminders-new"
-    BSL.writeFile newFile . Aeson.encode =<< func file
+    BSL.writeFile newFile . Aeson.encodePretty =<< func file
     renameFile newFile remFile
 
 enableReminder :: UUID -> (RemindersFile -> RemindersFile)
