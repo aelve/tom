@@ -1,5 +1,5 @@
 {-# LANGUAGE
-  ViewPatterns
+ViewPatterns
   #-}
 
 
@@ -13,8 +13,11 @@ where
 
 
 -- General
+import Data.Foldable (for_)
 import Data.Maybe
 import Data.Tuple
+-- Monad transformers
+import Control.Monad.Writer
 -- Text
 import Data.Char
 -- Time
@@ -46,80 +49,35 @@ olsonToTZName s = fromMaybe err $ lookup s (map swap tzAbbreviations)
 -- means “PDT” half of the time). So, all “standard” zones actually are
 -- “standard/daylight”.
 tzAbbreviations :: [(String, String)]
-tzAbbreviations =
+tzAbbreviations = execWriter $ do
+  let a ==> b = tell [(a, b)]
   -- universal time
-  [ ( "UTC"    , "Etc/UTC" )
-  , ( "UCT"    , "Etc/UTC" )
-  , ( "GMT"    , "Etc/UTC" )
+  "UTC" ==> "Etc/UTC"
+  "UCT" ==> "Etc/UTC"
+  "GMT" ==> "Etc/UTC"
   -- Moscow Time
-  , ( "MSK"    , "Europe/Moscow" )
+  "MSK" ==> "Europe/Moscow"
   -- Pacific Time
-  , ( "PT"     , "America/Los_Angeles" )
-  , ( "PST"    , "America/Los_Angeles" )
+  "PT"  ==> "America/Los_Angeles"
+  "PST" ==> "America/Los_Angeles"
   -- Mountain Time
-  , ( "MT"     , "America/Phoenix" )
-  , ( "MST"    , "America/Phoenix" )
+  "MT"  ==> "America/Phoenix"
+  "MST" ==> "America/Phoenix"
   -- Central Time
-  , ( "CT"     , "America/Chicago" )
-  , ( "CST"    , "America/Chicago" )
+  "CT"  ==> "America/Chicago"
+  "CST" ==> "America/Chicago"
   -- Eastern Time
-  , ( "ET"     , "America/New_York" )
-  , ( "EST"    , "America/New_York" )
-  -- UTC-x (NB: signs in Olson database are the opposite of “what people
-  -- expect”, yes)
-  , ( "UTC-0"  , "Etc/UTC"    )
-  , ( "UTC-1"  , "Etc/GMT+1"  )
-  , ( "UTC-2"  , "Etc/GMT+2"  )
-  , ( "UTC-3"  , "Etc/GMT+3"  )
-  , ( "UTC-4"  , "Etc/GMT+4"  )
-  , ( "UTC-5"  , "Etc/GMT+5"  )
-  , ( "UTC-6"  , "Etc/GMT+6"  )
-  , ( "UTC-7"  , "Etc/GMT+7"  )
-  , ( "UTC-8"  , "Etc/GMT+8"  )
-  , ( "UTC-9"  , "Etc/GMT+9"  )
-  , ( "UTC-10" , "Etc/GMT+10" )
-  , ( "UTC-11" , "Etc/GMT+11" )
-  , ( "UTC-12" , "Etc/GMT+12" )
-  -- UTC+x
-  , ( "UTC+0"  , "Etc/UTC"    )
-  , ( "UTC+1"  , "Etc/GMT-1"  )
-  , ( "UTC+2"  , "Etc/GMT-2"  )
-  , ( "UTC+3"  , "Etc/GMT-3"  )
-  , ( "UTC+4"  , "Etc/GMT-4"  )
-  , ( "UTC+5"  , "Etc/GMT-5"  )
-  , ( "UTC+6"  , "Etc/GMT-6"  )
-  , ( "UTC+7"  , "Etc/GMT-7"  )
-  , ( "UTC+8"  , "Etc/GMT-8"  )
-  , ( "UTC+9"  , "Etc/GMT-9"  )
-  , ( "UTC+10" , "Etc/GMT-10" )
-  , ( "UTC+11" , "Etc/GMT-11" )
-  , ( "UTC+12" , "Etc/GMT-12" )
-  -- GMT-x
-  , ( "GMT-0"  , "Etc/UTC"    )
-  , ( "GMT-1"  , "Etc/GMT+1"  )
-  , ( "GMT-2"  , "Etc/GMT+2"  )
-  , ( "GMT-3"  , "Etc/GMT+3"  )
-  , ( "GMT-4"  , "Etc/GMT+4"  )
-  , ( "GMT-5"  , "Etc/GMT+5"  )
-  , ( "GMT-6"  , "Etc/GMT+6"  )
-  , ( "GMT-7"  , "Etc/GMT+7"  )
-  , ( "GMT-8"  , "Etc/GMT+8"  )
-  , ( "GMT-9"  , "Etc/GMT+9"  )
-  , ( "GMT-10" , "Etc/GMT+10" )
-  , ( "GMT-11" , "Etc/GMT+11" )
-  , ( "GMT-12" , "Etc/GMT+12" )
-  -- GMT+x
-  , ( "GMT+0"  , "Etc/UTC"    )
-  , ( "GMT+1"  , "Etc/GMT-1"  )
-  , ( "GMT+2"  , "Etc/GMT-2"  )
-  , ( "GMT+3"  , "Etc/GMT-3"  )
-  , ( "GMT+4"  , "Etc/GMT-4"  )
-  , ( "GMT+5"  , "Etc/GMT-5"  )
-  , ( "GMT+6"  , "Etc/GMT-6"  )
-  , ( "GMT+7"  , "Etc/GMT-7"  )
-  , ( "GMT+8"  , "Etc/GMT-8"  )
-  , ( "GMT+9"  , "Etc/GMT-9"  )
-  , ( "GMT+10" , "Etc/GMT-10" )
-  , ( "GMT+11" , "Etc/GMT-11" )
-  , ( "GMT+12" , "Etc/GMT-12" )
-  ]
+  "ET"  ==> "America/New_York"
+  "EST" ==> "America/New_York"
+  -- UTC-x, UTC+x, GMT-x, GMT+x (NB: signs in Olson database are the opposite
+  -- of what would be expected – UTC-x is really “Etc/GMT+X”)
+  "UTC-0" ==> "Etc/UTC"
+  "UTC+0" ==> "Etc/UTC"
+  "GMT-0" ==> "Etc/UTC"
+  "GMT+0" ==> "Etc/UTC"
+  for_ [1..12] $ \x -> do
+    let sx = show x
+    ("UTC-" ++ sx) ==> ("Etc/GMT+" ++ sx)
+    ("UTC+" ++ sx) ==> ("Etc/GMT-" ++ sx)
+    ("GMT-" ++ sx) ==> ("Etc/GMT+" ++ sx)
+    ("GMT+" ++ sx) ==> ("Etc/GMT-" ++ sx)
