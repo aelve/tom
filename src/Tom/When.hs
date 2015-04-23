@@ -1,14 +1,14 @@
 {-# LANGUAGE
-  RecordWildCards
-, DeriveGeneric
-, TupleSections
+RecordWildCards,
+DeriveGeneric,
+TupleSections
   #-}
 
 
-module Tom.Mask
+module Tom.When
 (
-  Mask(..),
-  allMaskParsers,
+  When(..),
+  allWhenParsers,
   momentP,
   wildcardP,
   durationP,
@@ -45,16 +45,17 @@ import Data.Time.Zones
 import Tom.Time
 
 
-data Mask = Mask
-  { year     :: Maybe Integer
-  , month    :: Maybe Int
-  , day      :: Maybe Int
-  , hour     :: Maybe Int
-  , minute   :: Maybe Int
-  , second   :: Maybe Int
-  , weekdays :: Maybe [Int]     -- ^ Numbers between 1 and 7.
-  , timezone :: Maybe String    -- ^ 'Nothing' = always use local timezone.
-  }
+-- | A type for specifying moments of time when a reminder should fire.
+data When
+  = Mask {
+      year     :: Maybe Integer,
+      month    :: Maybe Int,
+      day      :: Maybe Int,
+      hour     :: Maybe Int,
+      minute   :: Maybe Int,
+      second   :: Maybe Int,
+      weekdays :: Maybe [Int],    -- ^ Numbers between 1 and 7.
+      timezone :: Maybe String }  -- ^ 'Nothing' = always use local timezone.
   deriving (Eq, Generic)
 
 -- Examples of format used by Read and Show instances of Mask:
@@ -62,7 +63,7 @@ data Mask = Mask
 --   - xxxx-xx-03,13.xx:56
 --   - 2015-xx-xx[6,7],12.00:00(UTC)
 
-instance Show Mask where
+instance Show When where
   show Mask{..} = do
     -- Show something with padding. If not set, show some “x”s; if set, show
     -- and pad with zeroes.
@@ -82,7 +83,7 @@ instance Show Mask where
       (mb 2 hour) (mb 2 minute) (mb 2 second)
       (maybe "" (\s -> "(" ++ olsonToTZName s ++ ")") timezone)
 
-instance Read Mask where
+instance Read When where
   readPrec = do
     -- Some local definitions to make life easier (since Parsec steals
     -- ReadP's names).
@@ -113,15 +114,15 @@ instance Read Mask where
       parseTZName =<< between (char '(') (char ')') (munch (/= ')'))
     return Mask{..}
 
-instance NFData Mask
+instance NFData When
 
--- | A parser for masks ('Mask'). IO may be needed to query timezones, for
--- instance.
-type MaskParser = Parser (IO Mask)
+-- | A parser for time specifiers ('When'). IO may be needed to query
+-- timezones, for instance.
+type WhenParser = Parser (IO When)
 
 -- | All mask parsers exported by this module.
-allMaskParsers :: [MaskParser]
-allMaskParsers = [momentP, wildcardP, durationP]
+allWhenParsers :: [WhenParser]
+allWhenParsers = [momentP, wildcardP, durationP]
 
 -- | A parser for nonnegative integers (0, 1, 2, ...).
 nonnegative :: (Read a, Integral a) => Parser a
@@ -137,9 +138,10 @@ parseAMPM = do
   -- 4. 13am shall mean 1.00. For consistency.
   let fromPM x = if x >= 12 then x else x + 12
       fromAM x = if x <  12 then x else x - 12
-  choice [ string "pm" *> pure fromPM
-         , string "am" *> pure fromAM
-         , pure id ]
+  choice [
+    string "pm" *> pure fromPM,
+    string "am" *> pure fromAM,
+    pure id ]
 
 {- |
 Parses year, accounting for the “assume current millenium” shortcut.
@@ -186,7 +188,7 @@ If the resulting time is always in the past, the function will fail.
 A timezone can be specified as an abbreviation. At the moment, only a handful
 of abbreviations are supported.
 -}
-momentP :: MaskParser
+momentP :: WhenParser
 momentP = do
   -- Parsing date: it's either “Y-M-D”, “M-D”, “D”, or nothing (and then
   -- there is no slash). We use Just to denote that year/month/day is set.
@@ -336,16 +338,15 @@ momentP = do
           fromMaybe 
             (error "Can't be scheduled – time is in the past.")
             (nextYear (cYear, (cMonth, (cDay, (cHour, (cMinute, cSecond))))))
-    return $ Mask
-      { year     = Just year'
-      , month    = Just month'
-      , day      = Just day'
-      , hour     = Just hour'
-      , minute   = Just minute'
-      , second   = Just second'
-      , weekdays = Nothing
-      , timezone = mbTZ
-      }
+    return Mask {
+      year     = Just year',
+      month    = Just month',
+      day      = Just day',
+      hour     = Just hour',
+      minute   = Just minute',
+      second   = Just second',
+      weekdays = Nothing,
+      timezone = mbTZ }
 
 {- |
 A parser for masks with wildcards.
@@ -373,7 +374,7 @@ the day”.
 A timezone can be specified as an abbreviation. At the moment, only a handful
 of abbreviations are supported.
 -}
-wildcardP :: MaskParser
+wildcardP :: WhenParser
 wildcardP = do
   -- A function to turn any parser into a parser which accepts a wildcard
   -- (and returns Nothing in that case).
@@ -406,17 +407,15 @@ wildcardP = do
     -- And now we can return parsed hour, minute, second, and timezone.
     return (fromAMPM <$> h, m, s, tz)
 
-  return $ return
-    Mask
-      { year     = mbYear
-      , month    = mbMonth
-      , day      = mbDay
-      , hour     = mbHour
-      , minute   = mbMinute
-      , second   = mbSecond
-      , weekdays = Nothing
-      , timezone = mbTZ
-      }
+  return $ return Mask {
+    year     = mbYear,
+    month    = mbMonth,
+    day      = mbDay,
+    hour     = mbHour,
+    minute   = mbMinute,
+    second   = mbSecond,
+    weekdays = Nothing,
+    timezone = mbTZ }
 
 {- |
 A parser for time durations (like “1h20m”).
@@ -428,7 +427,7 @@ followed by one of:
   * “m” (minutes)
   * “s” (seconds)
 -}
-durationP :: MaskParser
+durationP :: WhenParser
 durationP = do
   let thingP = do
         n <- nonnegative
@@ -441,13 +440,12 @@ durationP = do
     time <- getCurrentTime
     let ((cYear,cMonth,cDay),(cHour,cMinute,cSecond)) =
           expandTime utcTZ (addUTCTime (fromIntegral total) time)
-    return Mask
-      { year     = Just cYear
-      , month    = Just cMonth
-      , day      = Just cDay
-      , hour     = Just cHour
-      , minute   = Just cMinute
-      , second   = Just cSecond
-      , weekdays = Nothing
-      , timezone = tzNameToOlson "UTC"
-      }
+    return Mask {
+      year     = Just cYear,
+      month    = Just cMonth,
+      day      = Just cDay,
+      hour     = Just cHour,
+      minute   = Just cMinute,
+      second   = Just cSecond,
+      weekdays = Nothing,
+      timezone = tzNameToOlson "UTC" }

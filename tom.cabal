@@ -19,7 +19,7 @@ Source-repository head
 executable tom
   main-is:             Main.hs
   other-modules:       Tom.Common
-                       Tom.Mask
+                       Tom.When
                        Tom.Time
   -- other-extensions:    
   build-depends:       aeson                >= 0.8,

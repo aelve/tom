@@ -1,8 +1,8 @@
 {-# LANGUAGE
-  ViewPatterns
-, BangPatterns
-, TupleSections
-, MultiWayIf
+ViewPatterns,
+BangPatterns,
+TupleSections,
+MultiWayIf
   #-}
 
 
@@ -11,16 +11,16 @@ import           Control.Applicative
 import           Control.Monad
 import           Data.Foldable (asum, for_, traverse_)
 import           Data.Maybe
--- Parsing
-import           Text.Parsec hiding ((<|>), optional)
-import           Text.Parsec.String
 -- Lists
 import           Data.List (find)
 import           GHC.Exts (sortWith)
+-- Containers
+import qualified Data.Map as M
 -- Text
 import           Text.Printf
--- Map
-import qualified Data.Map as M
+-- Parsing
+import           Text.Parsec hiding ((<|>), optional)
+import           Text.Parsec.String
 -- Time
 import           Data.Time
 import           Data.Time.Calendar.MonthDay
@@ -34,7 +34,7 @@ import           Graphics.UI.Gtk
 import           Data.IORef
 import           System.Environment
 -- Tom-specific
-import           Tom.Mask
+import           Tom.When
 import           Tom.Common
 
 
@@ -48,17 +48,16 @@ scheduleReminder (dt:msg) = do
   time <- getCurrentTime
   -- Forcing evaluation because otherwise, if something fails, it'll fail
   -- during writing the reminder, and that'd be bad.
-  let maskP = choice $ map (\p -> try (p <* eof)) allMaskParsers
-  mask <- evaluate . force =<<
-            either (error . show) id (parse maskP "" dt)
-  let reminder = Reminder
-        { mask             = mask
-        , message          = unwords msg
-        , created          = time
-        , lastSeen         = time
-        , lastAcknowledged = time
-        , ignoreUntil      = time
-        }
+  let scheduleP = choice $ map (\p -> try (p <* eof)) allWhenParsers
+  schedule <- evaluate . force =<<
+    either (error . show) id (parse scheduleP "" dt)
+  let reminder = Reminder {
+        schedule         = schedule,
+        message          = unwords msg,
+        created          = time,
+        lastSeen         = time,
+        lastAcknowledged = time,
+        ignoreUntil      = time }
   withRemindersFile $ addReminder reminder
   putStrLn "Scheduled a reminder."
 
@@ -70,11 +69,11 @@ listReminders args = do
         ["--sort", "seen"] -> sortWith lastSeen
   putStrLn "Off:"
   for_ (sortRs (M.elems (remindersOff file))) $ \r ->
-    printf "  %s: %s\n" (show (mask r)) (message r)
+    printf "  %s: %s\n" (show (schedule r)) (message r)
   putStrLn ""
   putStrLn "On:"
   for_ (sortRs (M.elems (remindersOn file))) $ \r ->
-    printf "  %s: %s\n" (show (mask r)) (message r)
+    printf "  %s: %s\n" (show (schedule r)) (message r)
 
 daemonMain = do
   alertsRef <- newIORef M.empty
@@ -103,12 +102,12 @@ loop alertsRef =
     -- + It got expired since the moment it was last acknowledged, and it was
     -- seen more than 5min ago.
     let isExpired r = do
-          reexpired <- reminderInInterval (lastSeen r) t (mask r)
-          forgotten <- reminderInInterval (lastAcknowledged r) t (mask r)
-          return $
-            and [ t >= ignoreUntil r
-                , or [ reexpired
-                     , forgotten && diffUTCTime t (lastSeen r) >= 5*60 ] ]
+          reexpired <- reminderInInterval (lastSeen r) t (schedule r)
+          forgotten <- reminderInInterval (lastAcknowledged r) t (schedule r)
+          return $ and [
+            t >= ignoreUntil r,
+            or [ reexpired,
+                 forgotten && diffUTCTime t (lastSeen r) >= 5*60 ] ]
 
     expired <- filterM (isExpired . snd) (M.assocs (remindersOn file))
     for_ expired $ \(uuid, reminder) -> do
@@ -126,13 +125,13 @@ loop alertsRef =
                  MessageInfo
                  ButtonsNone
                  ("Reminder: " ++ message reminder ++ "\n\n" ++
-                  "(" ++ show (mask reminder) ++ ")")
-      mapM_ (uncurry (dialogAddButton alert))
-        [ ("5min later" :: String, ResponseUser 300  )
-        , ("1h later"            , ResponseUser 3600 )
-        , ("12h later"           , ResponseUser 43200)
-        , ("Turn it off"         , ResponseNo        )
-        , ("Thanks!"             , ResponseYes       ) ]
+                  "(" ++ show (schedule reminder) ++ ")")
+      mapM_ (uncurry (dialogAddButton alert)) [
+        ("5min later" :: String, ResponseUser 300  ),
+        ("1h later"            , ResponseUser 3600 ),
+        ("12h later"           , ResponseUser 43200),
+        ("Turn it off"         , ResponseNo        ),
+        ("Thanks!"             , ResponseYes       ) ]
 
       -- Processing a response goes as follows:
       -- 
@@ -151,11 +150,11 @@ loop alertsRef =
           -- could change in the file, even tho there's only a second for it
           -- to happen. So, we're only going to act using reminder's UUID.
           let snooze s = modifyReminder uuid $ \reminder ->
-                reminder { lastSeen    = t
-                         , ignoreUntil = addUTCTime s t }
+                reminder { lastSeen    = t,
+                           ignoreUntil = addUTCTime s t }
           let thanks   = modifyReminder uuid $ \reminder ->
-                reminder { lastSeen         = t
-                         , lastAcknowledged = t }
+                reminder { lastSeen         = t,
+                           lastAcknowledged = t }
           let seen     = modifyReminder uuid $ \reminder ->
                 reminder { lastSeen = t }
           case responseId of

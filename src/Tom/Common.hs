@@ -1,8 +1,8 @@
 {-# LANGUAGE
-  RecordWildCards
-, ViewPatterns
-, DeriveGeneric
-, OverloadedStrings
+RecordWildCards,
+ViewPatterns,
+DeriveGeneric,
+OverloadedStrings
   #-}
 
 
@@ -22,49 +22,59 @@ where
 
 
 -- General
-import Control.Applicative
-import Control.Monad
-import Data.Maybe
-import Data.Monoid
+import           Control.Applicative
+import           Control.Monad
+import           Data.Maybe
+import           Data.Monoid
 -- Files
-import System.Directory                             -- directory
-import System.FilePath                              -- filepath
-import System.FileLock                              -- filelock
+import           System.Directory                   -- directory
+import           System.FilePath                    -- filepath
+import           System.FileLock                    -- filelock
 -- ByteString
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 -- Map
 import qualified Data.Map as M
-import Data.Map (Map)
+import           Data.Map (Map)
 -- Time
-import Data.Time
-import Data.Time.Calendar.OrdinalDate
-import Data.Time.Zones                              -- tz
+import           Data.Time
+import           Data.Time.Calendar.OrdinalDate
+import           Data.Time.Zones                    -- tz
 -- UUIDs
-import Data.UUID hiding (null)                      -- uuid
+import           Data.UUID hiding (null)            -- uuid
 -- JSON
-import Data.Aeson as Aeson                          -- aeson
+import           Data.Aeson as Aeson                -- aeson
 import qualified Data.Aeson.Encode.Pretty as Aeson  -- aeson-pretty
 -- Randomness
-import System.Random
+import           System.Random
 -- Tom-specific
-import Tom.Time
-import Tom.Mask
+import           Tom.Time
+import           Tom.When
 
 
-data Reminder = Reminder
-  { mask             :: Mask
-  , message          :: String
-  , created          :: UTCTime
-  , lastSeen         :: UTCTime
-  , lastAcknowledged :: UTCTime
-  , ignoreUntil      :: UTCTime
-  }
+-- | A single reminder.
+data Reminder
+  = Reminder {
+      -- | When the reminder should fire
+      schedule         :: When,
+      -- | Message to be shown
+      message          :: String,
+      -- | When the reminder was created
+      created          :: UTCTime,
+      -- | When the reminder was last seen by the user (this is used to avoid
+      -- showing the same reminder every second once it has fired)
+      lastSeen         :: UTCTime,
+      -- | When the reminder was last acknowledged (i.e. the “thanks” button
+      -- was pressed) – needed to handle recurring reminders, for which
+      -- “acknowledged” doesn't mean “done with”
+      lastAcknowledged :: UTCTime,
+      -- | When to start showing the reminder (used for snoozing)
+      ignoreUntil      :: UTCTime }
   deriving (Eq, Read, Show)
 
 instance FromJSON Reminder where
   parseJSON = withObject "reminder" $ \o -> do
-    mask             <- read <$> o .: "mask"
+    schedule         <- read <$> o .: "schedule"
     message          <- o .: "message"
     created          <- o .: "created"
     lastSeen         <- o .: "seen"
@@ -73,26 +83,24 @@ instance FromJSON Reminder where
     return Reminder{..}
 
 instance ToJSON Reminder where
-  toJSON Reminder{..} = object
-    [ "mask"         .= show mask
-    , "message"      .= message
-    , "created"      .= created
-    , "seen"         .= lastSeen
-    , "acknowledged" .= lastAcknowledged
-    , "ignore-until" .= ignoreUntil
-    ]
+  toJSON Reminder{..} = object [
+    "schedule"     .= show schedule,
+    "message"      .= message,
+    "created"      .= created,
+    "seen"         .= lastSeen,
+    "acknowledged" .= lastAcknowledged,
+    "ignore-until" .= ignoreUntil ]
 
-data RemindersFile = RemindersFile
-  { remindersOn  :: Map UUID Reminder
-  , remindersOff :: Map UUID Reminder
-  }
+data RemindersFile
+  = RemindersFile {
+      remindersOn  :: Map UUID Reminder,
+      remindersOff :: Map UUID Reminder }
   deriving (Read, Show)
 
 nullRemindersFile :: RemindersFile
-nullRemindersFile = RemindersFile
-  { remindersOn  = mempty
-  , remindersOff = mempty
-  }
+nullRemindersFile = RemindersFile {
+  remindersOn  = mempty,
+  remindersOff = mempty }
 
 instance FromJSON RemindersFile where
   parseJSON = withObject "reminders file" $ \o -> do
@@ -101,10 +109,9 @@ instance FromJSON RemindersFile where
     return RemindersFile{..}
 
 instance ToJSON RemindersFile where
-  toJSON RemindersFile{..} = object
-    [ "on"  .= M.mapKeys show remindersOn
-    , "off" .= M.mapKeys show remindersOff
-    ]
+  toJSON RemindersFile{..} = object [
+    "on"  .= M.mapKeys show remindersOn,
+    "off" .= M.mapKeys show remindersOff ]
 
 getDir = do
   dir <- getAppUserDataDirectory "aelve/tom"
@@ -148,14 +155,14 @@ withRemindersFile func = do
 enableReminder :: UUID -> (RemindersFile -> RemindersFile)
 enableReminder u file = fromMaybe file $ do
   r <- M.lookup u (remindersOff file)
-  return file { remindersOn  = M.insert u r (remindersOn file)
-              , remindersOff = M.delete u (remindersOff file) }
+  return file { remindersOn  = M.insert u r (remindersOn file),
+                remindersOff = M.delete u (remindersOff file) }
 
 disableReminder :: UUID -> (RemindersFile -> RemindersFile)
 disableReminder u file = fromMaybe file $ do
   r <- M.lookup u (remindersOn file)
-  return file { remindersOn  = M.delete u (remindersOn file)
-              , remindersOff = M.insert u r (remindersOff file) }
+  return file { remindersOn  = M.delete u (remindersOn file),
+                remindersOff = M.insert u r (remindersOff file) }
 
 modifyReminder :: UUID -> (Reminder -> Reminder)
                        -> (RemindersFile -> RemindersFile)
@@ -171,8 +178,8 @@ addReminder r file = do
   u <- randomIO
   return file { remindersOn = M.insert u r (remindersOn file) }
 
--- | Check whether there's -a moment of time which matches the mask- in a
--- time interval.
+-- | Check whether there's -a moment of time which matches the schedule- in
+-- a time interval.
 timeInInterval
   :: (Int, Int, Int)
   -> (Int, Int, Int)
@@ -199,19 +206,19 @@ floorUTCTime t = t {utctDayTime = fromInteger (floor (utctDayTime t))}
 -- 2012-07-01 00:00:00 UTC
 ceilingUTCTime :: UTCTime -> UTCTime
 ceilingUTCTime t
-  | d >= 86400 = t { utctDay     = addDays 1 (utctDay t)
-                   , utctDayTime = 0 }
+  | d >= 86400 = t { utctDay     = addDays 1 (utctDay t),
+                     utctDayTime = 0 }
   | otherwise  = t { utctDayTime = fromInteger d }
   where
     d = ceiling (utctDayTime t)
 
 -- | Check whether a reminder has fired in a time interval. Not as efficient
 -- as it could be (it takes O(days in the interval)). 'IO' is needed to look
--- up the timezone from the name contained in the mask.
+-- up the timezone from the name contained in the schedule.
 reminderInInterval
   :: UTCTime       -- ^ Beginning of the interval.
   -> UTCTime       -- ^ End of the interval.
-  -> Mask          -- ^ Reminder's time mask.
+  -> When          -- ^ Reminder's schedule.
   -> IO Bool
 reminderInInterval (ceilingUTCTime -> a) (floorUTCTime -> b) Mask{..} = do
   -- If timezone is specified in the reminder, use it, and otherwise use the
@@ -231,10 +238,9 @@ reminderInInterval (ceilingUTCTime -> a) (floorUTCTime -> b) Mask{..} = do
              | otherwise                            = succ julianA
       dateB' | timeInInterval startB timeB timeMask = julianB
              | otherwise                            = pred julianB
-  let check whole@(toGregorian -> (y,m,d)) = and
-        [ maybe True (== y) year
-        , maybe True (== m) month
-        , maybe True (== d) day
-        , maybe True (snd (mondayStartWeek whole) `elem`) weekdays
-        ]
+  let check whole@(toGregorian -> (y,m,d)) = and [
+        maybe True (== y) year,
+        maybe True (== m) month,
+        maybe True (== d) day,
+        maybe True (snd (mondayStartWeek whole) `elem`) weekdays ]
   return (not . null . filter check $ [dateA' .. dateB'])
