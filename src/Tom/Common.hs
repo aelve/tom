@@ -29,6 +29,7 @@ import           Data.Monoid
 -- Files
 import           System.Directory                   -- directory
 import           System.FilePath                    -- filepath
+-- File locking
 import           System.FileLock                    -- filelock
 -- ByteString
 import qualified Data.ByteString as BS
