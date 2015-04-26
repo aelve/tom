@@ -219,31 +219,54 @@ ceilingUTCTime t
 -- as it could be (it takes O(days in the interval)). 'IO' is needed to look
 -- up the timezone from the name contained in the schedule.
 reminderInInterval
-  :: UTCTime       -- ^ Beginning of the interval.
-  -> UTCTime       -- ^ End of the interval.
-  -> When          -- ^ Reminder's schedule.
+  :: UTCTime       -- ^ Beginning of the interval
+  -> UTCTime       -- ^ End of the interval
+  -> When          -- ^ Reminder's schedule
   -> IO Bool
 reminderInInterval (ceilingUTCTime -> a) (floorUTCTime -> b) Mask{..} = do
   -- If timezone is specified in the reminder, use it, and otherwise use the
   -- local one.
-  tz <- fromMaybe loadLocalTZ (loadSystemTZ <$> timezone)
+  tz <- case timezone of
+    Nothing -> loadLocalTZ
+    Just x  -> loadSystemTZ x
+
+  -- Break endpoints of the interval into parts (using the timezone we know).
   let (dateA@(yearA,monthA,dayA),timeA) = expandTime tz a
       (dateB@(yearB,monthB,dayB),timeB) = expandTime tz b
-  -- Use the time mask to decide which days are acceptable (after that we can
-  -- stop being bothered about time at all). Basically, we only have to check
-  -- whether the 1st and last days match, and the rest always do.
+
+  -- Use the mask to decide on which days the time specified in the mask can
+  -- occur (after that we can stop being bothered about time at all). When a
+  -- day is whole, we assume that it contains *all* possible times (it's a
+  -- lie, because when DST kicks in, a day loses or gains an additional hour
+  -- – but we ignore that), and therefore we only have to check the first and
+  -- last days, because they aren't whole.
+
+  -- endA   = “when does the first day end”
+  -- startB = “when does the last day start”
   let (endA, startB) | dateA == dateB = (timeB, timeA)
                      | otherwise      = ((23,59,59),(0,0,0))
+
+  -- First and last days as “Day”s instead of tuples of year-month-day – this
+  -- is needed to be able to enumerate them easily later using “..”.
+  let julianA, julianB :: Day
       julianA = fromGregorian yearA monthA dayA
       julianB = fromGregorian yearB monthB dayB
-      timeMask = (hour, minute, second)
+
+  -- dateA' = “the first day when given time actually occurs”
+  -- dateB' = “the last day when given time actually occurs”
+  let timeMask = (hour, minute, second)
       dateA' | timeInInterval timeA endA timeMask   = julianA
              | otherwise                            = succ julianA
       dateB' | timeInInterval startB timeB timeMask = julianB
              | otherwise                            = pred julianB
+
+  -- A function to check whether a day fits the given mask.
   let check whole@(toGregorian -> (y,m,d)) = and [
         maybe True (== y) year,
         maybe True (== m) month,
         maybe True (== d) day,
         maybe True (snd (mondayStartWeek whole) `elem`) weekdays ]
+
+  -- Now we have all the pieces, and can just enumerate all possible days,
+  -- check each for fitting the mask, and say whether we found a day we want.
   return (not . null . filter check $ [dateA' .. dateB'])
