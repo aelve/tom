@@ -148,7 +148,9 @@ withRemindersFile func = do
     -- happens while we're writing (such as power outage), we risk losing all
     -- reminders. So, instead we're going to write into a *different* file,
     -- and then atomically (or so documentation for 'renameFile' claims)
-    -- rename the new one into the old one.
+    -- rename the new one into the old one. Note: we can't create this file
+    -- in a temporary directory, because it might not be on the same device,
+    -- which would cause renameFile to fail.
     let newFile = dir </> "reminders-new"
     BSL.writeFile newFile . Aeson.encodePretty =<< func file
     renameFile newFile remFile
