@@ -41,12 +41,14 @@ import           Tom.When
 import           Tom.Common
 
 
+main :: IO ()
 main = do
   args <- getArgs
   if | null args || head args == "--sort" -> listReminders args
      | head args == "--daemon"            -> daemonMain
      | otherwise                          -> scheduleReminder args
 
+scheduleReminder :: [String] -> IO ()
 scheduleReminder (dt:msg) = do
   time <- getCurrentTime
   -- Forcing evaluation because otherwise, if something fails, it'll fail
@@ -64,6 +66,7 @@ scheduleReminder (dt:msg) = do
   withRemindersFile $ addReminder reminder
   putStrLn "Scheduled a reminder."
 
+listReminders :: [String] -> IO ()
 listReminders args = do
   file <- readRemindersFile 
   let sortRs = case args of
@@ -78,6 +81,7 @@ listReminders args = do
   for_ (sortRs (M.elems (remindersOn file))) $ \r ->
     printf "  %s: %s\n" (show (schedule r)) (message r)
 
+daemonMain :: IO ()
 daemonMain = do
   alertsRef <- newIORef M.empty
   initGUI
@@ -97,9 +101,16 @@ right-clicking them), close the window, and recreate it.
 
 data TimeUnit = Minute | Hour
 
+-- | Get the abbreviation for a time unit.
 unitAbbr :: TimeUnit -> String
 unitAbbr Minute = "m"
 unitAbbr Hour   = "h"
+
+-- | Add @n@ minutes\/hours\/etc to a moment in time.
+unitAdd :: Integer -> TimeUnit -> UTCTime -> UTCTime
+unitAdd n unit time = case unit of
+  Minute -> addUTCTime (fromInteger n * 60) time
+  Hour   -> addUTCTime (fromInteger n * 3600) time
 
 data Alert = Alert {
   alertWindow  :: MessageDialog,
@@ -173,13 +184,9 @@ createAlert uuid reminder mbState = do
       -- happen. So, we're only going to act using reminder's UUID.
       let snooze i = \file -> do
             (times, (n, unit)) <- (!! i) <$> readIORef buttonsRef
-            let secondsInUnit = case unit of
-                  Minute -> 60
-                  Hour   -> 3600
-                seconds = fromInteger (times * n * secondsInUnit)
             let changeFunc reminder = reminder {
                   lastSeen    = t,
-                  ignoreUntil = addUTCTime seconds t }
+                  ignoreUntil = unitAdd n unit t }
             return $ modifyReminder uuid changeFunc file
       let thanks = modifyReminder uuid $ \reminder -> reminder {
             lastSeen         = t,
