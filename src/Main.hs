@@ -1,8 +1,6 @@
 {-# LANGUAGE
-ViewPatterns,
-BangPatterns,
-TupleSections,
-MultiWayIf
+MultiWayIf,
+RecordWildCards
   #-}
 
 
@@ -10,12 +8,14 @@ MultiWayIf
 import           Control.Applicative
 import           Control.Monad
 import           Data.Foldable (asum, for_, traverse_)
+import           Data.Traversable (traverse)
 import           Data.Maybe
 -- Lists
 import           Data.List (find)
 import           GHC.Exts (sortWith)
 -- Containers
 import qualified Data.Map as M
+import           Data.Map (Map)
 -- Text
 import           Text.Printf
 -- Parsing
@@ -30,11 +30,12 @@ import           Control.DeepSeq
 import           Control.Exception (evaluate)
 -- GTK
 import           Graphics.UI.Gtk
+-- UUID
+import           Data.UUID hiding (null)
 -- IO
 import           Data.IORef
 import           System.Environment
--- UUID
-import           Data.UUID hiding (null)
+import           Control.Monad.IO.Class
 -- Tom-specific
 import           Tom.When
 import           Tom.Common
@@ -83,11 +84,46 @@ daemonMain = do
   timeoutAdd (loop alertsRef >> return True) 1000  -- Repeat every 1s.
   mainGUI
 
+{-
+Note about alerts
+============================================================
+
+We can't use 'windowPresent' to show an already existing alert, because at
+least in Gnome it doesn't work (instead of moving the window to current
+workspace, it changes the current workspace, and that's annoying). Instead,
+we save the alert's state (as it has buttons which can be changed by
+right-clicking them), close the window, and recreate it.
+-}
+
+data TimeUnit = Minute | Hour
+
+unitAbbr :: TimeUnit -> String
+unitAbbr Minute = "m"
+unitAbbr Hour   = "h"
+
+data Alert = Alert {
+  alertWindow  :: MessageDialog,
+  alertButtons :: IORef [(Integer, (Integer, TimeUnit))] }
+
+-- | This is what you can get from an 'Alert' and what you can use to
+-- recreate an alert.
+data AlertState = AlertState {
+  -- | Each button has a base value and a multiplier – for instance, for “5m
+  -- later” the stored value would be @(1, (5, Minute))@, and for “15m later”
+  -- – @(3, (5, Minute))@.
+  alertStateButtons :: [(Integer, (Integer, TimeUnit))] }
+
+getAlertState :: Alert -> IO AlertState
+getAlertState Alert{..} = do
+  alertStateButtons <- readIORef alertButtons
+  return AlertState{..}
+
 createAlert
-  :: UUID        -- ^ Reminder ID
-  -> Reminder    -- ^ Reminder
-  -> IO MessageDialog
-createAlert uuid reminder = do
+  :: UUID              -- ^ Reminder ID
+  -> Reminder          -- ^ Reminder
+  -> Maybe AlertState  -- ^ Saved alert state
+  -> IO Alert
+createAlert uuid reminder mbState = do
   alert <- messageDialogNew
              Nothing
              []       -- flags
@@ -95,12 +131,29 @@ createAlert uuid reminder = do
              ButtonsNone
              ("Reminder: " ++ message reminder ++ "\n\n" ++
               "(" ++ show (schedule reminder) ++ ")")
-  mapM_ (uncurry (dialogAddButton alert)) [
-    ("5min later" :: String, ResponseUser 300  ),
-    ("1h later"            , ResponseUser 3600 ),
-    ("12h later"           , ResponseUser 43200),
-    ("Turn it off"         , ResponseNo        ),
-    ("Thanks!"             , ResponseYes       ) ]
+
+  -- Add “... later” buttons from state (or default buttons).
+  let showLabel (mul, (n, unit)) = show (mul*n) ++ unitAbbr unit ++ " later"
+  let buttons = case mbState of
+        Just st -> alertStateButtons st
+        Nothing -> zip [1,1..] [(5, Minute), (1, Hour), (12, Hour)]
+  buttonsRef <- newIORef buttons
+  for_ (zip [0..] buttons) $ \(i, b) -> do
+    button <- dialogAddButton alert (showLabel b) (ResponseUser i)
+    -- On right click, the button's multiplier is increased and the label is
+    -- updated.
+    button `on` buttonPressEvent $ tryEvent $ do
+      SingleClick <- eventClick
+      RightButton <- eventButton
+      liftIO $ do
+        (mul, nUnit) <- (!! i) <$> readIORef buttonsRef
+        let b' = (mul+1, nUnit)
+        buttonSetLabel button (showLabel b')
+        modifyIORef buttonsRef $ \s -> take i s ++ b' : drop (i+1) s
+
+  -- Add the rest of the buttons.
+  dialogAddButton alert "Turn it off" ResponseNo
+  dialogAddButton alert "Thanks!"     ResponseYes
 
   -- Processing a response goes as follows:
   -- 
@@ -114,27 +167,37 @@ createAlert uuid reminder = do
   -- + The alert window is closed.
   alert `on` response $ \responseId -> do
     t <- getCurrentTime
-    withRemindersFile . fmap return $ do
-      -- We don't use the fact that we already have the reminder (r). It
-      -- could change in the file, even tho there's only a second for it
-      -- to happen. So, we're only going to act using reminder's UUID.
-      let snooze s = modifyReminder uuid $ \reminder ->
-            reminder { lastSeen    = t,
-                       ignoreUntil = addUTCTime s t }
-      let thanks   = modifyReminder uuid $ \reminder ->
-            reminder { lastSeen         = t,
-                       lastAcknowledged = t }
-      let seen     = modifyReminder uuid $ \reminder ->
-            reminder { lastSeen = t }
+    withRemindersFile $ do
+      -- We don't use the fact that we already have the reminder – it could
+      -- change in the file, even tho there's only a second for it to
+      -- happen. So, we're only going to act using reminder's UUID.
+      let snooze i = \file -> do
+            (times, (n, unit)) <- (!! i) <$> readIORef buttonsRef
+            let secondsInUnit = case unit of
+                  Minute -> 60
+                  Hour   -> 3600
+                seconds = fromInteger (times * n * secondsInUnit)
+            let changeFunc reminder = reminder {
+                  lastSeen    = t,
+                  ignoreUntil = addUTCTime seconds t }
+            return $ modifyReminder uuid changeFunc file
+      let thanks = modifyReminder uuid $ \reminder -> reminder {
+            lastSeen         = t,
+            lastAcknowledged = t }
+      let seen = modifyReminder uuid $ \reminder -> reminder {
+            lastSeen = t }
       case responseId of
-        ResponseUser s -> snooze (fromIntegral s)
-        ResponseYes    -> thanks
-        ResponseNo     -> disableReminder uuid
-        _other         -> seen
+        ResponseUser i -> snooze i
+        ResponseYes    -> return . thanks
+        ResponseNo     -> return . disableReminder uuid
+        _other         -> return . seen
     widgetDestroy alert
 
-  return alert
+  return Alert {
+    alertWindow  = alert,
+    alertButtons = buttonsRef }
 
+loop :: IORef (Map UUID Alert) -> IO ()
 loop alertsRef =
   withRemindersFile $ \file -> do
     t <- getCurrentTime
@@ -168,22 +231,23 @@ loop alertsRef =
       putStrLn $ "Reminder " ++ show uuid ++ " has expired."
 
       -- If the old alert window is still hanging around, close it.
-      mbOldDialog <- M.lookup uuid <$> readIORef alertsRef
-      traverse_ widgetDestroy mbOldDialog
+      mbOldAlert <- M.lookup uuid <$> readIORef alertsRef
+      mbOldAlertState <- traverse getAlertState mbOldAlert
+      traverse_ (widgetDestroy . alertWindow) mbOldAlert
       modifyIORef' alertsRef (M.delete uuid)
 
       -- Create another alert window.
-      alert <- createAlert uuid reminder
+      alert <- createAlert uuid reminder mbOldAlertState
 
       -- When the alert window is closed, we remove it from the map.
-      alert `after` objectDestroy $ do
+      alertWindow alert `after` objectDestroy $ do
         modifyIORef' alertsRef (M.delete uuid)
 
       -- Add the alert to the map.
       modifyIORef' alertsRef (M.insert uuid alert)
 
       -- Show the alert.
-      widgetShow alert
+      widgetShow (alertWindow alert)
 
     -- Finally, lastSeen of all snown reminders must be updated.
     let expired' = fmap (\r -> r { lastSeen = t }) (M.fromList expired)
