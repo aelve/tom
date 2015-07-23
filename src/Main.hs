@@ -7,11 +7,10 @@ RecordWildCards
 -- General
 import           Control.Applicative
 import           Control.Monad
-import           Data.Foldable (asum, for_, traverse_)
+import           Data.Foldable (asum, for_, traverse_, find)
 import           Data.Traversable (traverse)
 import           Data.Maybe
 -- Lists
-import           Data.List (find)
 import           GHC.Exts (sortWith)
 -- Containers
 import qualified Data.Map as M

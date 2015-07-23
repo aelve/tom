@@ -20,10 +20,8 @@ where
 -- General
 import Control.Applicative
 import Control.Monad
-import Data.Foldable (asum)
+import Data.Foldable (asum, find)
 import Data.Maybe
--- Lists
-import Data.List (find)
 -- Parsing (Read)
 import Text.Read (Read(..))
 import qualified Text.Read as Read (lift)
