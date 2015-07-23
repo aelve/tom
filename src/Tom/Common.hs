@@ -48,6 +48,10 @@ import           Data.Aeson as Aeson                -- aeson
 import qualified Data.Aeson.Encode.Pretty as Aeson  -- aeson-pretty
 -- Randomness
 import           System.Random
+-- IORef (used for caching the reminders file)
+import           Data.IORef
+-- unsafePerformIO
+import           System.IO.Unsafe (unsafePerformIO)
 -- Tom-specific
 import           Tom.Time
 import           Tom.When
@@ -121,29 +125,47 @@ getDir = do
     createDirectory dir
   return dir
 
+-- | Just read the reminders file, without setting up any locks and so on.
+--
+-- This function, however, does implement caching – if the reminders file
+-- hasn't changed, it will be simply taken from the cache instead of being
+-- reread and reparsed.
+--
+-- This function doesn't assume that the file exists, and will recreate it if
+-- it doesn't.
+readRemindersFileWithoutLocking :: IO RemindersFile
+readRemindersFileWithoutLocking = do
+  dir <- getDir
+  let filename = dir </> "reminders"
+  exists <- doesFileExist filename
+  when (not exists) $
+    BSL.writeFile filename (Aeson.encodePretty nullRemindersFile)
+  fileChanged <- getModificationTime filename
+  cache <- readIORef cacheRef
+  case cache of
+    Just (cacheCreated, file) | cacheCreated > fileChanged ->
+      return file
+    _other -> do
+      contents <- BSL.fromStrict <$> BS.readFile filename
+      let err  = error "Can't parse reminders."
+          file = fromMaybe err (Aeson.decode' contents)
+      writeIORef cacheRef (Just (fileChanged, file))
+      return file
+  where
+    cacheRef :: IORef (Maybe (UTCTime, RemindersFile))
+    cacheRef = unsafePerformIO $ newIORef Nothing
+
 readRemindersFile :: IO RemindersFile
 readRemindersFile = do
   dir <- getDir
   withFileLock (dir </> "lock") Exclusive $ \_ -> do
-    let fileName = dir </> "reminders"
-    exists <- doesFileExist fileName
-    when (not exists) $
-      BSL.writeFile fileName (Aeson.encodePretty nullRemindersFile)
-    contents <- BSL.fromStrict <$> BS.readFile fileName
-    let err = error "Can't parse reminders."
-    return $ fromMaybe err (Aeson.decode' contents)
+    readRemindersFileWithoutLocking
 
 withRemindersFile :: (RemindersFile -> IO RemindersFile) -> IO ()
 withRemindersFile func = do
   dir <- getDir
   withFileLock (dir </> "lock") Exclusive $ \_ -> do
-    let remFile = dir </> "reminders"
-    exists <- doesFileExist remFile
-    when (not exists) $
-      BSL.writeFile remFile (Aeson.encodePretty nullRemindersFile)
-    contents <- BSL.fromStrict <$> BS.readFile remFile
-    let err  = error "Can't parse reminders."
-        file = fromMaybe err (Aeson.decode' contents)
+    file <- readRemindersFileWithoutLocking
     -- Just writing encoded data to the file isn't safe, because if something
     -- happens while we're writing (such as power outage), we risk losing all
     -- reminders. So, instead we're going to write into a *different* file,
@@ -153,7 +175,7 @@ withRemindersFile func = do
     -- which would cause renameFile to fail.
     let newFile = dir </> "reminders-new"
     BSL.writeFile newFile . Aeson.encodePretty =<< func file
-    renameFile newFile remFile
+    renameFile newFile (dir </> "reminders")
 
 enableReminder :: UUID -> (RemindersFile -> RemindersFile)
 enableReminder u file = fromMaybe file $ do
