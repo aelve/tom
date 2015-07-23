@@ -1,7 +1,8 @@
 {-# LANGUAGE
 RecordWildCards,
 DeriveGeneric,
-TupleSections
+TupleSections,
+FlexibleContexts
   #-}
 
 

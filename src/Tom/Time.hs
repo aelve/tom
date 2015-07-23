@@ -1,5 +1,6 @@
 {-# LANGUAGE
-ViewPatterns
+ViewPatterns,
+FlexibleContexts
   #-}
 
 
