@@ -12,11 +12,13 @@ import           Data.Traversable (traverse)
 import           Data.Maybe
 -- Lists
 import           GHC.Exts (sortWith)
+import           Data.List (isInfixOf)
 -- Containers
 import qualified Data.Map as M
 import           Data.Map (Map)
 -- Text
 import           Text.Printf
+import           Data.Char
 -- Parsing
 import           Text.Parsec hiding ((<|>), optional)
 import           Text.Parsec.String
@@ -134,13 +136,19 @@ createAlert
   -> Maybe AlertState  -- ^ Saved alert state
   -> IO Alert
 createAlert uuid reminder mbState = do
+  let dialogText = highlightLinks (message reminder)
+  
   alert <- messageDialogNew
              Nothing
              []       -- flags
              MessageInfo
              ButtonsNone
-             ("Reminder: " ++ message reminder ++ "\n\n" ++
+             ("Reminder: " ++ dialogText ++ "\n\n" ++
               "(" ++ show (schedule reminder) ++ ")")
+
+  -- Enable dialog markup (so that links added by 'highlightLinks' would be
+  -- rendered as links).
+  set alert [messageDialogUseMarkup := True]
 
   -- Add “... later” buttons from state (or default buttons).
   let showLabel (mul, (n, unit)) = show (mul*n) ++ unitAbbr unit ++ " later"
@@ -258,3 +266,32 @@ loop alertsRef =
     -- Finally, lastSeen of all snown reminders must be updated.
     let expired' = fmap (\r -> r { lastSeen = t }) (M.fromList expired)
     return file { remindersOn = M.union expired' (remindersOn file) }
+
+highlightLinks :: String -> String
+highlightLinks "" = ""
+highlightLinks ('>':s) = "&gt;" ++ highlightLinks s
+highlightLinks ('<':s) = case break (== '>') s of
+  -- “<” doesn't have a closing “>”, so it's not a link
+  (_, "") -> "&lt;" ++ s
+  (link, rest)
+    -- empty link isn't a link
+    | null link ->
+        "&lt;" ++ highlightLinks rest
+    -- “<” is followed by <not a letter/digit>, so it's not a link
+    | c:_ <- link, not (isLetter c || isDigit c) ->
+        "&lt;" ++ highlightLinks (link ++ rest)
+    -- link-detection algorithm: if any “.” is followed by something which
+    -- isn't a space and isn't “.” (to avoid “...”), it's a link
+    | or [not (isSpace c || c == '.') | ('.', c) <- pairs link] -> do
+        let httpLink = if "://" `isInfixOf` link
+                         then link else "http://" ++ link
+        printf "<a href=\"%s\">%s</a>" httpLink link ++
+          highlightLinks (tail rest)
+    -- otherwise, not a link
+    | otherwise ->
+        "&lt;" ++ highlightLinks (link ++ rest)
+highlightLinks (x:s) = x : highlightLinks s
+
+pairs :: [a] -> [(a, a)]
+pairs [] = []
+pairs s  = zip s (tail s)
