@@ -25,7 +25,7 @@ module Tom.Common
   disableReminder,
   addReminder,
   modifyReminder,
-  reminderInInterval,
+  isReminderInInterval,
 )
 where
 
@@ -258,12 +258,8 @@ ceilingUTCTime t
 -- | Check whether a reminder has fired in a time interval. Not as efficient
 -- as it could be (it takes O(days in the interval)). 'IO' is needed to look
 -- up the timezone from the name contained in the schedule.
-reminderInInterval
-  :: UTCTime       -- ^ Beginning of the interval
-  -> UTCTime       -- ^ End of the interval
-  -> When          -- ^ Reminder's schedule
-  -> IO Bool
-reminderInInterval (ceilingUTCTime -> a) (floorUTCTime -> b) Mask{..} = do
+isReminderInInterval :: (UTCTime, UTCTime) -> When -> IO Bool
+isReminderInInterval (ceilingUTCTime -> a, floorUTCTime -> b) Mask{..} = do
   -- If timezone is specified in the reminder, use it, and otherwise use the
   -- local one.
   tz <- case timezone of

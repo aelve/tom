@@ -78,12 +78,12 @@ listReminders args = do
         ["--sort", "seen"] -> sortWith (view lastSeen)
         []                 -> id  -- no need to sort reminders
   putStrLn "Off:"
-  for_ (sorted (file ^.. remindersOff . each)) $ \r ->
-    printf "  %s: %s\n" (show (r ^. schedule)) (r ^. message)
+  for_ (sorted (file ^.. remindersOff . each)) $ \reminder ->
+    printf "  %s: %s\n" (show (reminder ^. schedule)) (reminder ^. message)
   putStrLn ""
   putStrLn "On:"
-  for_ (sorted (file ^.. remindersOn . each)) $ \r ->
-    printf "  %s: %s\n" (show (r ^. schedule)) (r ^. message)
+  for_ (sorted (file ^.. remindersOn . each)) $ \reminder ->
+    printf "  %s: %s\n" (show (reminder ^. schedule)) (reminder ^. message)
 
 daemonMain :: IO ()
 daemonMain = do
@@ -96,11 +96,7 @@ daemonMain = do
 Note about alerts
 ============================================================
 
-We can't use 'windowPresent' to show an already existing alert, because at
-least in Gnome it doesn't work (instead of moving the window to current
-workspace, it changes the current workspace, and that's annoying). Instead,
-we save the alert's state (as it has buttons which can be changed by
-right-clicking them), close the window, and recreate it.
+We can't use 'windowPresent' to show an already existing alert, because at least in Gnome it doesn't work (instead of moving the window to current workspace, it changes the current workspace, and that's annoying). Instead, we save the alert's state (as it has buttons which can be changed by right-clicking them), close the window, and recreate it.
 -}
 
 data TimeUnit = Minute | Hour
@@ -155,22 +151,29 @@ createAlert uuid reminder mbState = do
 
   -- Add “... later” buttons from state (or default buttons).
   let showLabel (mul, (n, unit)) = show (mul*n) ++ unitAbbr unit ++ " later"
-  let buttons = case mbState of
+  let buttonDescriptions = case mbState of
+        -- When there aren't any buttons yet, we create new ones:
+        --   * “5 minutes” with multiplier 1
+        --   * “1 hour” with multiplier 1
+        --   * “12 hours” with multiplier 1
+        Nothing -> zip (repeat 1) [(5, Minute), (1, Hour), (12, Hour)]
         Just st -> alertStateButtons st
-        Nothing -> zip [1,1..] [(5, Minute), (1, Hour), (12, Hour)]
-  buttonsRef <- newIORef buttons
-  for_ (zip [0..] buttons) $ \(i, b) -> do
-    button <- dialogAddButton alert (showLabel b) (ResponseUser i)
+  buttonsRef <- newIORef buttonDescriptions
+  for_ (zip [0..] buttonDescriptions) $ \(index, buttonDescription) -> do
+    button <- dialogAddButton alert
+                (showLabel buttonDescription)
+                (ResponseUser index)
     -- On right click, the button's multiplier is increased and the label is
     -- updated.
     button `on` buttonPressEvent $ tryEvent $ do
       SingleClick <- eventClick
       RightButton <- eventButton
       liftIO $ do
-        (mul, nUnit) <- (!! i) <$> readIORef buttonsRef
-        let b' = (mul+1, nUnit)
-        buttonSetLabel button (showLabel b')
-        modifyIORef buttonsRef $ \s -> take i s ++ b' : drop (i+1) s
+        buttonState <- (!! index) <$> readIORef buttonsRef
+        -- Increase button's multiplier.
+        let buttonState' = buttonState & _1 %~ (+1)
+        buttonSetLabel button (showLabel buttonState')
+        modifyIORef buttonsRef (set (ix index) buttonState')
 
   -- Add the rest of the buttons.
   dialogAddButton alert "Turn it off" ResponseNo
@@ -187,26 +190,26 @@ createAlert uuid reminder mbState = do
   -- 
   -- + The alert window is closed.
   alert `on` response $ \responseId -> do
-    t <- getCurrentTime
+    time <- getCurrentTime
     withRemindersFile $ do
       -- We don't use the fact that we already have the reminder – it could
       -- change in the file, even tho there's only a second for it to
       -- happen. So, we're only going to act using reminder's UUID.
-      let snooze i = \file -> do
-            (times, (n, unit)) <- (!! i) <$> readIORef buttonsRef
+      let snooze buttonIndex = \file -> do
+            (times, (n, unit)) <- (!! buttonIndex) <$> readIORef buttonsRef
             let changeFunc reminder =
-                  reminder & lastSeen .~ t
-                           & ignoreUntil .~ unitAdd n unit t
+                  reminder & lastSeen .~ time
+                           & ignoreUntil .~ unitAdd n unit time
             return $ modifyReminder uuid changeFunc file
       let thanks = modifyReminder uuid
-            (set lastSeen t . set lastAcknowledged t)
+            (set lastSeen time . set lastAcknowledged time)
       let seen = modifyReminder uuid
-            (set lastSeen t)
+            (set lastSeen time)
       case responseId of
-        ResponseUser i -> snooze i
-        ResponseYes    -> return . thanks
-        ResponseNo     -> return . disableReminder uuid
-        _other         -> return . seen
+        ResponseUser buttonIndex -> snooze buttonIndex
+        ResponseYes              -> return . thanks
+        ResponseNo               -> return . disableReminder uuid
+        _other                   -> return . seen
     widgetDestroy alert
 
   return Alert {
@@ -216,7 +219,7 @@ createAlert uuid reminder mbState = do
 loop :: IORef (Map UUID Alert) -> IO ()
 loop alertsRef =
   withRemindersFile $ \file -> do
-    t <- getCurrentTime
+    currentTime <- getCurrentTime
     tz <- loadLocalTZ
 
     -- We want the following behavior:
@@ -235,12 +238,16 @@ loop alertsRef =
     -- + It got expired since the moment it was last acknowledged, and it was
     -- seen more than 5min ago.
     let isExpired r = do
-          reexpired <- reminderInInterval (r ^. lastSeen) t (r ^. schedule)
-          forgotten <- reminderInInterval (r ^. lastAcknowledged) t (r ^. schedule)
+          reexpired <- isReminderInInterval
+                         (r ^. lastSeen, currentTime)
+                         (r ^. schedule)
+          forgotten <- isReminderInInterval
+                         (r ^. lastAcknowledged, currentTime)
+                         (r ^. schedule)
           return $ and [
-            t >= (r ^. ignoreUntil),
+            currentTime >= (r ^. ignoreUntil),
             or [ reexpired,
-                 forgotten && diffUTCTime t (r ^. lastSeen) >= 5*60 ] ]
+                 forgotten && diffUTCTime currentTime (r ^. lastSeen) >= 5*60 ] ]
 
     expired <- filterM (isExpired . snd) (M.assocs (file ^. remindersOn))
     for_ expired $ \(uuid, reminder) -> do
@@ -266,7 +273,7 @@ loop alertsRef =
       widgetShow (alertWindow alert)
 
     -- Finally, lastSeen of all snown reminders must be updated.
-    let expired' = M.fromList expired & each . lastSeen .~ t
+    let expired' = M.fromList expired & each . lastSeen .~ currentTime
     return $ file & remindersOn %~ M.union expired'
 
 highlightLinks :: String -> String
