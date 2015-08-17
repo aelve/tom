@@ -51,6 +51,9 @@ olsonToTZName s = fromMaybe err $ lookup s (map swap tzAbbreviations)
 -- “standard/daylight”.
 tzAbbreviations :: [(String, String)]
 tzAbbreviations = execWriter $ do
+  -- (==>) means “add this pair to the list of pairs”. execWriter means
+  -- “execute Writer to get a list of pairs”. Google “writer monad” for
+  -- details, or just look at the documentation for “tell”.
   let a ==> b = tell [(a, b)]
   -- universal time
   "UTC" ==> "Etc/UTC"

@@ -2,14 +2,23 @@
 RecordWildCards,
 ViewPatterns,
 DeriveGeneric,
-OverloadedStrings
+OverloadedStrings,
+TemplateHaskell
   #-}
 
 
 module Tom.Common
 (
   Reminder(..),
+    schedule,
+    message,
+    created,
+    lastSeen,
+    lastAcknowledged,
+    ignoreUntil,
   RemindersFile(..),
+    remindersOn,
+    remindersOff,
   readRemindersFile,
   withRemindersFile,
   enableReminder,
@@ -26,6 +35,8 @@ import           Control.Applicative
 import           Control.Monad
 import           Data.Maybe
 import           Data.Monoid
+-- Lenses
+import           Lens.Micro.Platform hiding ((.=))
 -- Files
 import           System.Directory                   -- directory
 import           System.FilePath                    -- filepath
@@ -61,64 +72,68 @@ import           Tom.When
 data Reminder
   = Reminder {
       -- | When the reminder should fire
-      schedule         :: When,
+      _schedule         :: When,
       -- | Message to be shown
-      message          :: String,
+      _message          :: String,
       -- | When the reminder was created
-      created          :: UTCTime,
+      _created          :: UTCTime,
       -- | When the reminder was last seen by the user (this is used to avoid
       -- showing the same reminder every second once it has fired)
-      lastSeen         :: UTCTime,
+      _lastSeen         :: UTCTime,
       -- | When the reminder was last acknowledged (i.e. the “thanks” button
       -- was pressed) – needed to handle recurring reminders, for which
       -- “acknowledged” doesn't mean “done with”
-      lastAcknowledged :: UTCTime,
+      _lastAcknowledged :: UTCTime,
       -- | When to start showing the reminder (used for snoozing)
-      ignoreUntil      :: UTCTime }
+      _ignoreUntil      :: UTCTime }
   deriving (Eq, Read, Show)
+
+makeLenses ''Reminder
 
 instance FromJSON Reminder where
   parseJSON = withObject "reminder" $ \o -> do
-    schedule         <- read <$> o .: "schedule"
-    message          <- o .: "message"
-    created          <- o .: "created"
-    lastSeen         <- o .: "seen"
-    lastAcknowledged <- o .: "acknowledged"
-    ignoreUntil      <- o .: "ignore-until"
+    _schedule         <- read <$> o .: "schedule"
+    _message          <- o .: "message"
+    _created          <- o .: "created"
+    _lastSeen         <- o .: "seen"
+    _lastAcknowledged <- o .: "acknowledged"
+    _ignoreUntil      <- o .: "ignore-until"
     return Reminder{..}
 
 instance ToJSON Reminder where
   toJSON Reminder{..} = object [
-    "schedule"     .= show schedule,
-    "message"      .= message,
-    "created"      .= created,
-    "seen"         .= lastSeen,
-    "acknowledged" .= lastAcknowledged,
-    "ignore-until" .= ignoreUntil ]
+    "schedule"     .= show _schedule,
+    "message"      .= _message,
+    "created"      .= _created,
+    "seen"         .= _lastSeen,
+    "acknowledged" .= _lastAcknowledged,
+    "ignore-until" .= _ignoreUntil ]
 
 data RemindersFile
   = RemindersFile {
-      remindersOn  :: Map UUID Reminder,
-      remindersOff :: Map UUID Reminder }
+      _remindersOn  :: Map UUID Reminder,
+      _remindersOff :: Map UUID Reminder }
   deriving (Read, Show)
+
+makeLenses ''RemindersFile
 
 nullRemindersFile :: RemindersFile
 nullRemindersFile = RemindersFile {
-  remindersOn  = mempty,
-  remindersOff = mempty }
+  _remindersOn  = mempty,
+  _remindersOff = mempty }
 
 instance FromJSON RemindersFile where
   parseJSON = withObject "reminders file" $ \o -> do
-    remindersOn  <- M.mapKeys read <$> o .: "on"
-    remindersOff <- M.mapKeys read <$> o .: "off"
+    _remindersOn  <- M.mapKeys read <$> o .: "on"
+    _remindersOff <- M.mapKeys read <$> o .: "off"
     return RemindersFile{..}
 
 instance ToJSON RemindersFile where
   toJSON RemindersFile{..} = object [
-    "on"  .= M.mapKeys show remindersOn,
-    "off" .= M.mapKeys show remindersOff ]
+    "on"  .= M.mapKeys show _remindersOn,
+    "off" .= M.mapKeys show _remindersOff ]
 
-getDir = do
+getDataDirectory = do
   dir <- getAppUserDataDirectory "aelve/tom"
   ex <- doesDirectoryExist dir
   unless ex $
@@ -135,7 +150,7 @@ getDir = do
 -- it doesn't.
 readRemindersFileWithoutLocking :: IO RemindersFile
 readRemindersFileWithoutLocking = do
-  dir <- getDir
+  dir <- getDataDirectory
   let filename = dir </> "reminders"
   exists <- doesFileExist filename
   when (not exists) $
@@ -157,13 +172,13 @@ readRemindersFileWithoutLocking = do
 
 readRemindersFile :: IO RemindersFile
 readRemindersFile = do
-  dir <- getDir
+  dir <- getDataDirectory
   withFileLock (dir </> "lock") Exclusive $ \_ -> do
     readRemindersFileWithoutLocking
 
 withRemindersFile :: (RemindersFile -> IO RemindersFile) -> IO ()
 withRemindersFile func = do
-  dir <- getDir
+  dir <- getDataDirectory
   withFileLock (dir </> "lock") Exclusive $ \_ -> do
     file <- readRemindersFileWithoutLocking
     -- Just writing encoded data to the file isn't safe, because if something
@@ -178,30 +193,33 @@ withRemindersFile func = do
     renameFile newFile (dir </> "reminders")
 
 enableReminder :: UUID -> (RemindersFile -> RemindersFile)
-enableReminder u file = fromMaybe file $ do
-  r <- M.lookup u (remindersOff file)
-  return file { remindersOn  = M.insert u r (remindersOn file),
-                remindersOff = M.delete u (remindersOff file) }
+enableReminder uuid file =
+  case file ^. remindersOff . at uuid of
+    Nothing -> file
+    Just reminder -> file & remindersOn  . at uuid .~ Just reminder
+                          & remindersOff . at uuid .~ Nothing
 
 disableReminder :: UUID -> (RemindersFile -> RemindersFile)
-disableReminder u file = fromMaybe file $ do
-  r <- M.lookup u (remindersOn file)
-  return file { remindersOn  = M.delete u (remindersOn file),
-                remindersOff = M.insert u r (remindersOff file) }
+disableReminder uuid file =
+  case file ^. remindersOff . at uuid of
+    Nothing -> file
+    Just reminder -> file & remindersOn  . at uuid .~ Nothing
+                          & remindersOff . at uuid .~ Just reminder
 
 modifyReminder :: UUID -> (Reminder -> Reminder)
                        -> (RemindersFile -> RemindersFile)
-modifyReminder u f file
-  | M.member u (remindersOn file) =
-      file { remindersOn = M.adjust f u (remindersOn file) }
-  | otherwise =
-      file { remindersOff = M.adjust f u (remindersOff file) }
+modifyReminder uuid f file =
+  -- It's alright to modify the reminder in both remindersOn and
+  -- remindersOff, because the reminder with the given uuid is only going to
+  -- be in one of them.
+  file & remindersOn  . ix uuid %~ f
+       & remindersOff . ix uuid %~ f
 
 -- | Add a (turned on) reminder. The UUID will be generated automatically.
 addReminder :: Reminder -> (RemindersFile -> IO RemindersFile)
-addReminder r file = do
-  u <- randomIO
-  return file { remindersOn = M.insert u r (remindersOn file) }
+addReminder reminder file = do
+  uuid <- randomIO
+  return $ file & remindersOn . at uuid .~ Just reminder
 
 -- | Check whether there's -a moment of time which matches the schedule- in
 -- a time interval.

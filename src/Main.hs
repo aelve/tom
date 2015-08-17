@@ -10,6 +10,8 @@ import           Control.Monad
 import           Data.Foldable (asum, for_, traverse_, find)
 import           Data.Traversable (traverse)
 import           Data.Maybe
+-- Lenses
+import           Lens.Micro.Platform
 -- Lists
 import           GHC.Exts (sortWith)
 import           Data.List (isInfixOf)
@@ -30,7 +32,8 @@ import           Data.Time.Zones
 import           Control.DeepSeq
 import           Control.Exception (evaluate)
 -- GTK
-import           Graphics.UI.Gtk
+import           Graphics.UI.Gtk hiding (set)
+import qualified Graphics.UI.Gtk as Gtk
 -- UUID
 import           Data.UUID hiding (null)
 -- IO
@@ -55,32 +58,32 @@ scheduleReminder (dt:msg) = do
   -- Forcing evaluation because otherwise, if something fails, it'll fail
   -- during writing the reminder, and that'd be bad.
   let scheduleP = choice $ map (\p -> try (p <* eof)) allWhenParsers
-  schedule <- evaluate . force =<<
+  _schedule <- evaluate . force =<<
     either (error . show) id (parse scheduleP "" dt)
   let reminder = Reminder {
-        schedule         = schedule,
-        message          = unwords msg,
-        created          = time,
-        lastSeen         = time,
-        lastAcknowledged = time,
-        ignoreUntil      = time }
+        _schedule         = _schedule,
+        _message          = unwords msg,
+        _created          = time,
+        _lastSeen         = time,
+        _lastAcknowledged = time,
+        _ignoreUntil      = time }
   withRemindersFile $ addReminder reminder
   putStrLn "Scheduled a reminder."
 
 listReminders :: [String] -> IO ()
 listReminders args = do
-  file <- readRemindersFile 
-  let sortRs = case args of
-        []                 -> id
-        ["--sort", "ack"]  -> sortWith lastAcknowledged
-        ["--sort", "seen"] -> sortWith lastSeen
+  file <- readRemindersFile
+  let sorted = case args of
+        ["--sort", "ack"]  -> sortWith (view lastAcknowledged)
+        ["--sort", "seen"] -> sortWith (view lastSeen)
+        []                 -> id  -- no need to sort reminders
   putStrLn "Off:"
-  for_ (sortRs (M.elems (remindersOff file))) $ \r ->
-    printf "  %s: %s\n" (show (schedule r)) (message r)
+  for_ (sorted (file ^.. remindersOff . each)) $ \r ->
+    printf "  %s: %s\n" (show (r ^. schedule)) (r ^. message)
   putStrLn ""
   putStrLn "On:"
-  for_ (sortRs (M.elems (remindersOn file))) $ \r ->
-    printf "  %s: %s\n" (show (schedule r)) (message r)
+  for_ (sorted (file ^.. remindersOn . each)) $ \r ->
+    printf "  %s: %s\n" (show (r ^. schedule)) (r ^. message)
 
 daemonMain :: IO ()
 daemonMain = do
@@ -136,7 +139,7 @@ createAlert
   -> Maybe AlertState  -- ^ Saved alert state
   -> IO Alert
 createAlert uuid reminder mbState = do
-  let dialogText = highlightLinks (message reminder)
+  let dialogText = highlightLinks (reminder ^. message)
   
   alert <- messageDialogNew
              Nothing
@@ -144,11 +147,11 @@ createAlert uuid reminder mbState = do
              MessageInfo
              ButtonsNone
              ("Reminder: " ++ dialogText ++ "\n\n" ++
-              "(" ++ show (schedule reminder) ++ ")")
+              "(" ++ show (reminder ^. schedule) ++ ")")
 
   -- Enable dialog markup (so that links added by 'highlightLinks' would be
   -- rendered as links).
-  set alert [messageDialogUseMarkup := True]
+  Gtk.set alert [messageDialogUseMarkup := True]
 
   -- Add “... later” buttons from state (or default buttons).
   let showLabel (mul, (n, unit)) = show (mul*n) ++ unitAbbr unit ++ " later"
@@ -191,15 +194,14 @@ createAlert uuid reminder mbState = do
       -- happen. So, we're only going to act using reminder's UUID.
       let snooze i = \file -> do
             (times, (n, unit)) <- (!! i) <$> readIORef buttonsRef
-            let changeFunc reminder = reminder {
-                  lastSeen    = t,
-                  ignoreUntil = unitAdd n unit t }
+            let changeFunc reminder =
+                  reminder & lastSeen .~ t
+                           & ignoreUntil .~ unitAdd n unit t
             return $ modifyReminder uuid changeFunc file
-      let thanks = modifyReminder uuid $ \reminder -> reminder {
-            lastSeen         = t,
-            lastAcknowledged = t }
-      let seen = modifyReminder uuid $ \reminder -> reminder {
-            lastSeen = t }
+      let thanks = modifyReminder uuid
+            (set lastSeen t . set lastAcknowledged t)
+      let seen = modifyReminder uuid
+            (set lastSeen t)
       case responseId of
         ResponseUser i -> snooze i
         ResponseYes    -> return . thanks
@@ -233,14 +235,14 @@ loop alertsRef =
     -- + It got expired since the moment it was last acknowledged, and it was
     -- seen more than 5min ago.
     let isExpired r = do
-          reexpired <- reminderInInterval (lastSeen r) t (schedule r)
-          forgotten <- reminderInInterval (lastAcknowledged r) t (schedule r)
+          reexpired <- reminderInInterval (r ^. lastSeen) t (r ^. schedule)
+          forgotten <- reminderInInterval (r ^. lastAcknowledged) t (r ^. schedule)
           return $ and [
-            t >= ignoreUntil r,
+            t >= (r ^. ignoreUntil),
             or [ reexpired,
-                 forgotten && diffUTCTime t (lastSeen r) >= 5*60 ] ]
+                 forgotten && diffUTCTime t (r ^. lastSeen) >= 5*60 ] ]
 
-    expired <- filterM (isExpired . snd) (M.assocs (remindersOn file))
+    expired <- filterM (isExpired . snd) (M.assocs (file ^. remindersOn))
     for_ expired $ \(uuid, reminder) -> do
       putStrLn $ "Reminder " ++ show uuid ++ " has expired."
 
@@ -264,8 +266,8 @@ loop alertsRef =
       widgetShow (alertWindow alert)
 
     -- Finally, lastSeen of all snown reminders must be updated.
-    let expired' = fmap (\r -> r { lastSeen = t }) (M.fromList expired)
-    return file { remindersOn = M.union expired' (remindersOn file) }
+    let expired' = M.fromList expired & each . lastSeen .~ t
+    return $ file & remindersOn %~ M.union expired'
 
 highlightLinks :: String -> String
 highlightLinks "" = ""
