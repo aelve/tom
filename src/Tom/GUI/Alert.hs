@@ -142,7 +142,7 @@ createAlert uuid reminder varState = do
     for_ allButtons $ \button -> widgetSetSensitive button False
     flip timeoutAdd 1000 $ do
       for_ allButtons $ \button -> widgetSetSensitive button True
-      return False  -- Don't repeat the timeout.
+      return False  -- Don't repeat the timer.
     return ()
   -- Return created alert.
   return Alert {
