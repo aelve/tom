@@ -3,7 +3,8 @@ RecordWildCards,
 ViewPatterns,
 DeriveGeneric,
 OverloadedStrings,
-TemplateHaskell
+TemplateHaskell,
+RankNTypes
   #-}
 
 
@@ -15,10 +16,11 @@ module Tom.Common
     created,
     lastSeen,
     lastAcknowledged,
-    ignoreUntil,
+    snoozedUntil,
   RemindersFile(..),
     remindersOn,
     remindersOff,
+    reminder,
   readRemindersFile,
   withRemindersFile,
   enableReminder,
@@ -85,7 +87,7 @@ data Reminder
       -- “acknowledged” doesn't mean “done with”
       _lastAcknowledged :: UTCTime,
       -- | When to start showing the reminder (used for snoozing)
-      _ignoreUntil      :: UTCTime }
+      _snoozedUntil     :: UTCTime }
   deriving (Eq, Read, Show)
 
 makeLenses ''Reminder
@@ -97,25 +99,28 @@ instance FromJSON Reminder where
     _created          <- o .: "created"
     _lastSeen         <- o .: "seen"
     _lastAcknowledged <- o .: "acknowledged"
-    _ignoreUntil      <- o .: "ignore-until"
+    _snoozedUntil     <- o .: "snoozed-until"
     return Reminder{..}
 
 instance ToJSON Reminder where
   toJSON Reminder{..} = object [
-    "schedule"     .= show _schedule,
-    "message"      .= _message,
-    "created"      .= _created,
-    "seen"         .= _lastSeen,
-    "acknowledged" .= _lastAcknowledged,
-    "ignore-until" .= _ignoreUntil ]
+    "schedule"      .= show _schedule,
+    "message"       .= _message,
+    "created"       .= _created,
+    "seen"          .= _lastSeen,
+    "acknowledged"  .= _lastAcknowledged,
+    "snoozed-until" .= _snoozedUntil ]
 
-data RemindersFile
-  = RemindersFile {
-      _remindersOn  :: Map UUID Reminder,
-      _remindersOff :: Map UUID Reminder }
+data RemindersFile = RemindersFile {
+  _remindersOn  :: Map UUID Reminder,
+  _remindersOff :: Map UUID Reminder }
   deriving (Read, Show)
 
 makeLenses ''RemindersFile
+
+-- | A traversal which gives you access to a reminder by its 'UUID'.
+reminder :: UUID -> Traversal' RemindersFile Reminder
+reminder uuid = failing (remindersOn . ix uuid) (remindersOff . ix uuid)
 
 nullRemindersFile :: RemindersFile
 nullRemindersFile = RemindersFile {
@@ -133,6 +138,9 @@ instance ToJSON RemindersFile where
     "on"  .= M.mapKeys show _remindersOn,
     "off" .= M.mapKeys show _remindersOff ]
 
+-- | Get the directory where the settings and the reminders file and
+-- everything is.
+getDataDirectory :: IO FilePath
 getDataDirectory = do
   dir <- getAppUserDataDirectory "aelve/tom"
   ex <- doesDirectoryExist dir
@@ -176,6 +184,30 @@ readRemindersFile = do
   withFileLock (dir </> "lock") Exclusive $ \_ -> do
     readRemindersFileWithoutLocking
 
+enableReminder :: UUID -> IO ()
+enableReminder uuid = withRemindersFile $ \file ->
+  return $ case file ^. remindersOff . at uuid of
+    Nothing -> file
+    Just reminder -> file & remindersOn  . at uuid .~ Just reminder
+                          & remindersOff . at uuid .~ Nothing
+
+disableReminder :: UUID -> IO ()
+disableReminder uuid = withRemindersFile $ \file ->
+  return $ case file ^. remindersOn . at uuid of
+    Nothing -> file
+    Just reminder -> file & remindersOn  . at uuid .~ Nothing
+                          & remindersOff . at uuid .~ Just reminder
+
+modifyReminder :: UUID -> (Reminder -> Reminder) -> IO ()
+modifyReminder uuid f = withRemindersFile $ \file ->
+  return $ file & reminder uuid %~ f
+
+-- | Add a (turned on) reminder. The UUID will be generated automatically.
+addReminder :: Reminder -> IO ()
+addReminder reminder = withRemindersFile $ \file -> do
+  uuid <- randomIO
+  return $ file & remindersOn . at uuid .~ Just reminder
+
 withRemindersFile :: (RemindersFile -> IO RemindersFile) -> IO ()
 withRemindersFile func = do
   dir <- getDataDirectory
@@ -191,35 +223,6 @@ withRemindersFile func = do
     let newFile = dir </> "reminders-new"
     BSL.writeFile newFile . Aeson.encodePretty =<< func file
     renameFile newFile (dir </> "reminders")
-
-enableReminder :: UUID -> (RemindersFile -> RemindersFile)
-enableReminder uuid file =
-  case file ^. remindersOff . at uuid of
-    Nothing -> file
-    Just reminder -> file & remindersOn  . at uuid .~ Just reminder
-                          & remindersOff . at uuid .~ Nothing
-
-disableReminder :: UUID -> (RemindersFile -> RemindersFile)
-disableReminder uuid file =
-  case file ^. remindersOff . at uuid of
-    Nothing -> file
-    Just reminder -> file & remindersOn  . at uuid .~ Nothing
-                          & remindersOff . at uuid .~ Just reminder
-
-modifyReminder :: UUID -> (Reminder -> Reminder)
-                       -> (RemindersFile -> RemindersFile)
-modifyReminder uuid f file =
-  -- It's alright to modify the reminder in both remindersOn and
-  -- remindersOff, because the reminder with the given uuid is only going to
-  -- be in one of them.
-  file & remindersOn  . ix uuid %~ f
-       & remindersOff . ix uuid %~ f
-
--- | Add a (turned on) reminder. The UUID will be generated automatically.
-addReminder :: Reminder -> (RemindersFile -> IO RemindersFile)
-addReminder reminder file = do
-  uuid <- randomIO
-  return $ file & remindersOn . at uuid .~ Just reminder
 
 -- | Check whether there's -a moment of time which matches the schedule- in
 -- a time interval.
