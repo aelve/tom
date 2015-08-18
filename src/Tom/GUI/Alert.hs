@@ -22,6 +22,7 @@ where
 
 -- General
 import           Data.Foldable
+import           Data.Traversable
 import           Control.Monad
 -- Lenses
 import           Lens.Micro.Platform
@@ -126,13 +127,23 @@ createAlert uuid reminder varState = do
   -- rendered as links).
   Gtk.set alertWindow [messageDialogUseMarkup := True]
   -- Add “... later” buttons from state (or default buttons).
-  addSnoozeButtons varState alertWindow
+  snoozeButtons <- addSnoozeButtons varState alertWindow
   -- Add the rest of the buttons.
-  dialogAddButton alertWindow "Turn it off" ResponseNo
-  dialogAddButton alertWindow "Thanks!"     ResponseYes
+  buttonNo  <- dialogAddButton alertWindow "Turn it off" ResponseNo
+  buttonYes <- dialogAddButton alertWindow "Thanks!"     ResponseYes
   -- Assign actions to buttons.
   alertWindow `on` response $ \responseId ->
     responseHandler uuid varState alertWindow responseId
+  -- Add a handler: when the alert is shown, block the buttons and create a
+  -- timer that would unblock them in 1s (to prevent accidental clicks when
+  -- the user is doing something and the alert appears suddenly).
+  alertWindow `on` showSignal $ do
+    let allButtons = buttonNo : buttonYes : snoozeButtons
+    for_ allButtons $ \button -> widgetSetSensitive button False
+    flip timeoutAdd 1000 $ do
+      for_ allButtons $ \button -> widgetSetSensitive button True
+      return False  -- Don't repeat the timeout.
+    return ()
   -- Return created alert.
   return Alert {
     _window   = alertWindow,
@@ -194,14 +205,14 @@ checkReminders varAlertMap = withRemindersFile $ \file -> do
   return $ file & remindersOn %~ M.union expired'
 
 -- | Read buttons from 'AlertState' and add them to the alert window.
-addSnoozeButtons :: IORef AlertState -> AlertWindow -> IO ()
+addSnoozeButtons :: IORef AlertState -> AlertWindow -> IO [Button]
 addSnoozeButtons varState alertWindow = do
   -- First, we have to get the buttons out.
   buttonStates <- view buttons <$> readIORef varState
   -- Okay, let's create the buttons. Just in case:
   --   * buttonWidget = actual button widget in the alert
   --   * buttonDescr  = description of a button
-  for_ (zip [0..] buttonStates) $ \(index, buttonState) -> do
+  for (zip [0..] buttonStates) $ \(index, buttonState) -> do
     -- Create a button widget (which has the same response code as button's
     -- position in the original list – this lets us distinguish between
     -- buttons).
@@ -223,6 +234,7 @@ addSnoozeButtons varState alertWindow = do
         buttonSetLabel buttonWidget (makeButtonLabel newButtonState)
         let alertState' = alertState & buttons . ix index .~ newButtonState
         writeIORef varState alertState'
+    return buttonWidget
 
 responseHandler
   :: UUID -> IORef AlertState -> AlertWindow -> ResponseId -> IO ()
