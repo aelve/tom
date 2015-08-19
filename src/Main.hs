@@ -23,7 +23,7 @@ import Control.Exception (evaluate)
 import System.Environment
 -- Tom-specific
 import Tom.When
-import Tom.Common
+import Tom.Reminders
 import Tom.GUI
 
 

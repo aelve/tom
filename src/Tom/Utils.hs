@@ -4,11 +4,14 @@ FlexibleContexts
   #-}
 
 
-module Tom.Time
+module Tom.Utils
 (
+  -- * Time
   tzNameToOlson,
   olsonToTZName,
   expandTime,
+  -- * Lists
+  pairs,
 )
 where
 
@@ -25,14 +28,6 @@ import Data.Char
 import Data.Time
 import Data.Time.Zones
 
-
--- ((year, month, day), (hour, minute, second))
-expandTime :: TZ -> UTCTime -> ((Integer, Int, Int), (Int, Int, Int))
-expandTime tz t = ((year, month, day), (hour, minute, second))
-  where
-    local = utcToLocalTimeTZ tz t
-    (year, month, day) = toGregorian (localDay local)
-    TimeOfDay hour minute (truncate -> second) = localTimeOfDay local
 
 -- | Return Olson timezone name corresponding to an abbreviation.
 tzNameToOlson :: String -> Maybe String
@@ -85,3 +80,21 @@ tzAbbreviations = execWriter $ do
     ("UTC+" ++ sx) ==> ("Etc/GMT-" ++ sx)
     ("GMT-" ++ sx) ==> ("Etc/GMT+" ++ sx)
     ("GMT+" ++ sx) ==> ("Etc/GMT-" ++ sx)
+
+-- ((year, month, day), (hour, minute, second))
+expandTime :: TZ -> UTCTime -> ((Integer, Int, Int), (Int, Int, Int))
+expandTime tz t = ((year, month, day), (hour, minute, second))
+  where
+    local = utcToLocalTimeTZ tz t
+    (year, month, day) = toGregorian (localDay local)
+    TimeOfDay hour minute (truncate -> second) = localTimeOfDay local
+
+{- |
+An example:
+
+>>> pairs "abc"
+[('a','b'),('b','c')]
+-}
+pairs :: [a] -> [(a, a)]
+pairs [] = []
+pairs s  = zip s (tail s)

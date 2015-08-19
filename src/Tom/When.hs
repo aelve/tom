@@ -41,7 +41,7 @@ import Data.Time
 import Data.Time.Calendar.MonthDay
 import Data.Time.Zones
 -- Tom-specific
-import Tom.Time
+import Tom.Utils
 
 
 -- | A type for specifying moments of time when a reminder should fire.

@@ -45,7 +45,8 @@ import           Data.Time
 import           Data.IORef
 import           Control.Monad.IO.Class
 -- Tom-specific
-import           Tom.Common
+import           Tom.Reminders
+import           Tom.Utils
 
 
 data TimeUnit = Minute | Hour
@@ -278,13 +279,3 @@ highlightLinks ('<':s) = case break (== '>') s of
     | otherwise ->
         "&lt;" ++ highlightLinks (link ++ rest)
 highlightLinks (c:s) = c : highlightLinks s
-
-{- |
-This function is used in 'highlightLinks'. An example:
-
->>> pairs "abc"
-[('a','b'),('b','c')]
--}
-pairs :: [a] -> [(a, a)]
-pairs [] = []
-pairs s  = zip s (tail s)

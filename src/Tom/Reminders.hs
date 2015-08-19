@@ -8,7 +8,7 @@ RankNTypes
   #-}
 
 
-module Tom.Common
+module Tom.Reminders
 (
   Reminder(..),
     schedule,
@@ -66,8 +66,8 @@ import           Data.IORef
 -- unsafePerformIO
 import           System.IO.Unsafe (unsafePerformIO)
 -- Tom-specific
-import           Tom.Time
 import           Tom.When
+import           Tom.Utils
 
 
 -- | A single reminder.

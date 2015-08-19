@@ -18,11 +18,11 @@ Source-repository head
 
 executable tom
   main-is:             Main.hs
-  other-modules:       Tom.Common
+  other-modules:       Tom.Reminders
                        Tom.When
-                       Tom.Time
                        Tom.GUI.Alert
                        Tom.GUI
+                       Tom.Utils
   -- other-extensions:    
   build-depends:       aeson                >= 0.8,
                        aeson-pretty         >= 0.7,
