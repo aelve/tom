@@ -4,18 +4,9 @@ TemplateHaskell
   #-}
 
 
-{- |
-How does all this work:
-
-* There are alerts. Each alert has a window and some internal state.
-
-* You can modify the internal state from the window (e.g. right-click the buttons to make counts on them increase).
-
-* When it's time to pop up an alert, its state is saved, then the alert window is destroyed and recreated from the state. (It'd be easier to use 'windowPresent' to show an already existing alert, but we can't do that, because at least in Gnome it doesn't work – instead of moving the window to current workspace, it changes the current workspace, and that's annoying.)
--}
-module Tom.GUI.Alert
+module Tom.Daemon
 (
-  checkReminders,
+  runDaemon,
 )
 where
 
@@ -112,6 +103,79 @@ data Alert = Alert {
 
 makeLenses ''Alert
 
+{-
+How does all this work:
+
+* There are reminders (in the file).
+
+* For some reminders there are alerts shown (i.e. they already are on the screen). Each alert has a window and some internal state (for instance, button labels) – see 'AlertState'. The user can modify the internal state from the window (e.g. right-click the buttons to make counts on them increase).
+
+* When it's time to show an alert for a reminder, we use 'createAlert'. It's possible that the alert window is already there and just got ignored or hidden by other windows or whatever and we simply need to bring it to front so that the user would see it again; however, we can't do that easily (there's e.g. 'windowPresent', but at least in Gnome instead of -moving the window to the current workspace- it changes the current workspace, and that's annoying), so we have to recreate the window (using the state of the previous window).
+-}
+runDaemon :: IO ()
+runDaemon = do
+  varAlerts <- newIORef M.empty
+  initGUI
+  -- Repeat every 1s.
+  timeoutAdd (checkReminders varAlerts >> return True) 1000
+  mainGUI
+
+-- | Find all expired reminders, update them, show alerts for them.
+checkReminders :: IORef (Map UUID Alert) -> IO ()
+checkReminders varAlertMap = withRemindersFile $ \file -> do
+  currentTime <- getCurrentTime
+  -- We find all expired reminders (and their UUIDs).
+  expired <- filterM (isExpired currentTime . snd) (M.assocs (file ^. remindersOn))
+  for_ expired $ \(uuid, reminder) -> do
+    -- If the old alert is still hanging around, destroy it (and it'll be
+    -- automatically removed from varAlertMap).
+    mbOldAlert <- M.lookup uuid <$> readIORef varAlertMap
+    case mbOldAlert of
+      Just alert -> widgetDestroy (alert ^. window)
+      Nothing    -> return ()
+    -- Create another alert (possibly using state from the old alert).
+    newState <- case mbOldAlert of
+      Just alert -> alert ^. getState
+      Nothing    -> return defaultAlertState
+    varState <- newIORef newState
+    alert <- createAlert uuid reminder varState
+    -- Add a handler: when the alert window is closed, it'll be removed from
+    -- the map.
+    (alert ^. window) `after` objectDestroy $
+      modifyIORef' varAlertMap (M.delete uuid)
+    -- Add the alert to the map.
+    modifyIORef' varAlertMap (M.insert uuid alert)
+    -- Show the alert.
+    widgetShow (alert ^. window)
+  -- Finally, lastSeen of all snown reminders must be updated.
+  let expired' = M.fromList expired & each . lastSeen .~ currentTime
+  return $ file & remindersOn %~ M.union expired'
+
+{- |
+We want the following behavior:
+
+* When a reminder is shown and ignored, it's shown again in 5min (unless it gets expired again earlier than that – e.g. if it is set to be shown every minute).
+
+* When a reminder is shown and snoozed, it's not shown again until the snooze interval ends, even if it gets expired again in that period.
+
+So, we show a reminder if it's not snoozed and if either holds:
+
+* It got expired since the moment it was seen.
+
+* It got expired since the moment it was last acknowledged, and it was seen more than 5min ago.
+-}
+isExpired :: UTCTime -> Reminder -> IO Bool
+isExpired currentTime reminder = do
+  let notSnoozedAnymore = (reminder ^. snoozedUntil) <= currentTime
+      seenLongAgo = diffUTCTime currentTime (reminder ^. lastSeen) >= 5*60
+  reexpired <- isReminderInInterval
+                 (reminder ^. lastSeen, currentTime)
+                 (reminder ^. schedule)
+  forgotten <- isReminderInInterval
+                 (reminder ^. lastAcknowledged, currentTime)
+                 (reminder ^. schedule)
+  return $ notSnoozedAnymore && (reexpired || (seenLongAgo && forgotten))
+
 createAlert :: UUID -> Reminder -> IORef AlertState -> IO Alert
 createAlert uuid reminder varState = do
   let dialogText :: String
@@ -149,61 +213,6 @@ createAlert uuid reminder varState = do
   return Alert {
     _window   = alertWindow,
     _getState = readIORef varState }
-
-{- |
-We want the following behavior:
-
-* When a reminder is shown and ignored, it's shown again in 5min (unless it gets expired again earlier than that – e.g. if it is set to be shown every minute).
-
-* When a reminder is shown and snoozed, it's not shown again until the snooze interval ends, even if it gets expired again in that period.
-
-So, we show a reminder if it's not snoozed and if either holds:
-
-* It got expired since the moment it was seen.
-
-* It got expired since the moment it was last acknowledged, and it was seen more than 5min ago.
--}
-isExpired :: UTCTime -> Reminder -> IO Bool
-isExpired currentTime reminder = do
-  let notSnoozedAnymore = (reminder ^. snoozedUntil) <= currentTime
-      seenLongAgo = diffUTCTime currentTime (reminder ^. lastSeen) >= 5*60
-  reexpired <- isReminderInInterval
-                 (reminder ^. lastSeen, currentTime)
-                 (reminder ^. schedule)
-  forgotten <- isReminderInInterval
-                 (reminder ^. lastAcknowledged, currentTime)
-                 (reminder ^. schedule)
-  return $ notSnoozedAnymore && (reexpired || (seenLongAgo && forgotten))
-
--- | Find all expired reminders, update them, show alerts for them.
-checkReminders :: IORef (Map UUID Alert) -> IO ()
-checkReminders varAlertMap = withRemindersFile $ \file -> do
-  currentTime <- getCurrentTime
-  -- We find all expired reminders (and their UUIDs).
-  expired <- filterM (isExpired currentTime . snd) (M.assocs (file ^. remindersOn))
-  for_ expired $ \(uuid, reminder) -> do
-    -- If the old alert is still hanging around, destroy it.
-    mbOldAlert <- M.lookup uuid <$> readIORef varAlertMap
-    case mbOldAlert of
-      Just alert -> widgetDestroy (alert ^. window)
-      Nothing    -> return ()
-    -- Create another alert (possibly using state from the old alert).
-    newState <- case mbOldAlert of
-      Just alert -> alert ^. getState
-      Nothing    -> return defaultAlertState
-    varState <- newIORef newState
-    alert <- createAlert uuid reminder varState
-    -- Add a handler: when the alert window is closed, it'll be removed from
-    -- the map.
-    (alert ^. window) `after` objectDestroy $
-      modifyIORef' varAlertMap (M.delete uuid)
-    -- Add the alert to the map.
-    modifyIORef' varAlertMap (M.insert uuid alert)
-    -- Show the alert.
-    widgetShow (alert ^. window)
-  -- Finally, lastSeen of all snown reminders must be updated.
-  let expired' = M.fromList expired & each . lastSeen .~ currentTime
-  return $ file & remindersOn %~ M.union expired'
 
 -- | Read buttons from 'AlertState' and add them to the alert window.
 addSnoozeButtons :: IORef AlertState -> AlertWindow -> IO [Button]
