@@ -25,14 +25,16 @@ import System.Environment
 import Tom.When
 import Tom.Reminders
 import Tom.Daemon
+import Tom.GUI
 
 
 main :: IO ()
 main = do
   args <- getArgs
-  if | null args || head args == "--sort" -> listReminders args
-     | head args == "--daemon"            -> runDaemon
-     | otherwise                          -> scheduleReminder args
+  if | null args               -> runGUI
+     | head args == "--sort"   -> listReminders args
+     | head args == "--daemon" -> runDaemon
+     | otherwise               -> scheduleReminder args
 
 scheduleReminder :: [String] -> IO ()
 scheduleReminder (dt:msg) = do
