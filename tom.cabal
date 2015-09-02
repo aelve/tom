@@ -1,7 +1,8 @@
 name:                tom
 version:             0.1.0.0
-synopsis:            A tool for reminders.
-description:         A tool for reminders.
+synopsis:            A tool for reminders
+description:         A tool for reminders
+homepage:            https://github.com/aelve/tom
 license:             BSD3
 license-file:        LICENSE
 author:              Artyom
@@ -9,12 +10,11 @@ maintainer:          yom@artyom.me
 -- copyright:           
 category:            Application
 build-type:          Simple
--- extra-source-files:  
 cabal-version:       >=1.10
 
-Source-repository head
-  type:          git
-  location:      git://github.com/aelve/tom.git
+source-repository head
+  type:                git
+  location:            git://github.com/aelve/tom.git
 
 executable tom
   main-is:             Main.hs
