@@ -89,6 +89,7 @@ runGUI = do
   -- Create a layout (simply a table where widgets would be placed), put all
   -- other widgets there, and make the table a child of the main window.
   layout <- tableNew 2 1 False  -- 2 rows, 1 column, autostretching = off
+  -- TODO: but shouldn't it be 3 rows?
   tableAttachDefaults layout scheduleEntry 0 1 0 1
   tableAttachDefaults layout scheduleInfo 0 1 1 2
   tableAttachDefaults layout reminderEntryScrolled 0 1 2 3
