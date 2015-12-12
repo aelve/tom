@@ -11,7 +11,7 @@ import Lens.Micro.Platform
 -- Lists
 import GHC.Exts (sortWith)
 -- Parsing
-import Text.Parsec hiding ((<|>), optional)
+import Text.Megaparsec
 -- Text
 import Text.Printf
 -- Time

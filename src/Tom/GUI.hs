@@ -18,7 +18,7 @@ import Control.Monad.IO.Class
 -- Time
 import Data.Time
 -- Parsing
-import Text.Parsec
+import Text.Megaparsec
 -- Tom-specific
 import Tom.When
 import Tom.Reminders

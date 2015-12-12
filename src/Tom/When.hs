@@ -27,9 +27,9 @@ import Text.Read (Read(..))
 import qualified Text.Read as Read (lift)
 import qualified Text.ParserCombinators.ReadP as ReadP hiding (optional)
 import Text.ParserCombinators.ReadPrec (ReadPrec)
--- Parsing (Parsec); this one is used more and thus imported unqualified
-import Text.Parsec hiding (optional, (<|>))
-import Text.Parsec.String
+-- Parsing (Megaparsec); this one is used more and thus imported unqualified
+import Text.Megaparsec
+import Text.Megaparsec.String
 -- Strictness
 import Control.DeepSeq
 -- Text
@@ -125,7 +125,7 @@ allWhenParsers = [momentP, wildcardP, durationP]
 
 -- | A parser for nonnegative integers (0, 1, 2, ...).
 nonnegative :: (Read a, Integral a) => Parser a
-nonnegative = read <$> some digit
+nonnegative = read <$> some digitChar
 
 -- | A parser for “am”/“pm”, returning the function to apply to hours to get
 -- the corrected version.
@@ -152,13 +152,13 @@ Parses year, accounting for the “assume current millenium” shortcut.
 -}
 yearP :: Parser Integer
 yearP = do
-  s <- some digit
+  s <- some digitChar
   return $ if length s < 4 then 2000 + read s else read s
 
 -- | Timezone name parser. Returns already queried Olson name.
 timezoneP :: Parser String
 timezoneP = do
-  name <- some (letter <|> digit <|> oneOf "-+")
+  name <- some (letterChar <|> digitChar <|> oneOf "-+")
   case tzNameToOlson name of
     Nothing -> mzero
     Just tz -> return tz
@@ -434,7 +434,7 @@ durationP = do
           string "h" *> pure (n*3600),
           string "m" *> pure (n*60),
           string "s" *> pure n ]
-  total <- sum <$> many1 thingP
+  total <- sum <$> some thingP
   return $ do
     time <- getCurrentTime
     let ((cYear,cMonth,cDay),(cHour,cMinute,cSecond)) =

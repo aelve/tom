@@ -36,7 +36,7 @@ executable tom
                      , gtk3                 >= 0.13
                      , microlens-platform   >= 0.1.1
                      , mtl                  >= 2
-                     , parsec               >= 3.1.8 && <= 3.2
+                     , megaparsec           == 4.2.*
                      , random               >= 1
                      , text
                      , time                 >= 1.4
