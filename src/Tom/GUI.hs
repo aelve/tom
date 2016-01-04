@@ -1,3 +1,6 @@
+{-# LANGUAGE
+NoImplicitPrelude
+  #-}
 
 
 module Tom.GUI
@@ -7,6 +10,8 @@ module Tom.GUI
 where
 
 
+-- General
+import BasePrelude hiding (on, try)
 -- GTK
 import Graphics.UI.Gtk
 -- Text

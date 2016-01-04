@@ -1,6 +1,7 @@
 {-# LANGUAGE
 RecordWildCards,
-TemplateHaskell
+TemplateHaskell,
+NoImplicitPrelude
   #-}
 
 
@@ -12,19 +13,14 @@ where
 
 
 -- General
-import           Data.Foldable
-import           Data.Traversable
-import           Control.Monad
+import BasePrelude hiding (on)
 -- Lenses
-import           Lens.Micro.Platform
+import           Lens.Micro.Platform hiding ((&))
 -- Containers
 import qualified Data.Map as M
 import           Data.Map (Map)
--- Lists
-import           Data.List (isInfixOf)
 -- Text
 import           Text.Printf
-import           Data.Char
 -- GTK
 import           Graphics.UI.Gtk hiding (set, currentTime)
 import qualified Graphics.UI.Gtk as Gtk
@@ -33,7 +29,6 @@ import           Data.UUID hiding (null)
 -- Time
 import           Data.Time
 -- IO
-import           Data.IORef
 import           Control.Monad.IO.Class
 -- Tom-specific
 import           Tom.Reminders
@@ -225,13 +220,13 @@ addSnoozeButtons varState alertWindow = do
   -- Okay, let's create the buttons. Just in case:
   --   * buttonWidget = actual button widget in the alert
   --   * buttonDescr  = description of a button
-  for (zip [0..] buttonStates) $ \(index, buttonState) -> do
+  for (zip [0..] buttonStates) $ \(buttonIndex, buttonState) -> do
     -- Create a button widget (which has the same response code as button's
     -- position in the original list – this lets us distinguish between
     -- buttons).
     buttonWidget <- dialogAddButton alertWindow
                       (makeButtonLabel buttonState)
-                      (ResponseUser index)
+                      (ResponseUser buttonIndex)
     -- Assign the button an action – on right click, it increases button's
     -- multiplier and updates the label.
     buttonWidget `on` buttonPressEvent $ tryEvent $ do
@@ -243,9 +238,10 @@ addSnoozeButtons varState alertWindow = do
       liftIO $ do
         alertState <- readIORef varState
         let newButtonState = over multiplier (+1) $
-              alertState ^?! buttons . ix index
+              alertState ^?! buttons . ix buttonIndex
         buttonSetLabel buttonWidget (makeButtonLabel newButtonState)
-        let alertState' = alertState & buttons . ix index .~ newButtonState
+        let alertState' = alertState
+                            & buttons . ix buttonIndex .~ newButtonState
         writeIORef varState alertState'
     return buttonWidget
 
@@ -260,9 +256,9 @@ responseHandler uuid varState alertWindow responseId = do
     ResponseYes ->
       modifyReminder uuid $
         lastAcknowledged .~ currentTime
-    ResponseUser index -> do
+    ResponseUser buttonIndex -> do
       alertState <- readIORef varState
-      let buttonState = alertState ^?! buttons . ix index
+      let buttonState = alertState ^?! buttons . ix buttonIndex
       modifyReminder uuid $
         snoozedUntil .~ applyButton buttonState currentTime
     _other -> return ()

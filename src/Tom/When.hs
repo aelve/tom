@@ -2,7 +2,8 @@
 RecordWildCards,
 DeriveGeneric,
 TupleSections,
-FlexibleContexts
+FlexibleContexts,
+NoImplicitPrelude
   #-}
 
 
@@ -18,15 +19,10 @@ where
 
 
 -- General
-import Control.Applicative
-import Control.Monad
-import Data.Foldable (asum, find)
-import Data.Maybe
+import BasePrelude hiding (try, second)
 -- Parsing (Read)
-import Text.Read (Read(..))
-import qualified Text.Read as R (lift)
-import qualified Text.ParserCombinators.ReadP as R hiding (optional)
-import Text.ParserCombinators.ReadPrec (ReadPrec)
+import qualified Text.Read as R
+import qualified Text.ParserCombinators.ReadP as R
 -- Parsing (Megaparsec); this one is used more and thus imported unqualified
 import Text.Megaparsec
 import Text.Megaparsec.String
@@ -35,8 +31,6 @@ import Text.Megaparsec.Lexer
 import Control.DeepSeq
 -- Text
 import Text.Printf
--- Generics (used to autoderive NFData)
-import GHC.Generics
 -- Time
 import Data.Time
 import Data.Time.Calendar.MonthDay

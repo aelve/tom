@@ -1,12 +1,15 @@
+{-# LANGUAGE
+NoImplicitPrelude
+  #-}
+
+
 module Main (main) where
 
 
 -- General
-import Data.Foldable
+import BasePrelude hiding (try)
 -- Lenses
 import Lens.Micro.Platform
--- Lists
-import GHC.Exts (sortWith)
 -- Parsing
 import Text.Megaparsec
 -- Text
@@ -15,9 +18,6 @@ import Text.Printf
 import Data.Time
 -- Strictness
 import Control.DeepSeq
-import Control.Exception (evaluate)
--- IO
-import System.Environment
 -- Tom-specific
 import Tom.When
 import Tom.Reminders

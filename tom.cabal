@@ -27,6 +27,7 @@ executable tom
   build-depends:       aeson                    >= 0.8
                      , aeson-pretty             >= 0.7
                      , base                     >= 4.7 && < 4.9
+                     , base-prelude             == 0.1.*
                      , bytestring               >= 0.10.4
                      , containers               >= 0.5.5
                      , deepseq                  >= 1.3

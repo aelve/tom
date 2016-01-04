@@ -1,6 +1,7 @@
 {-# LANGUAGE
 ViewPatterns,
-FlexibleContexts
+FlexibleContexts,
+NoImplicitPrelude
   #-}
 
 
@@ -17,13 +18,9 @@ where
 
 
 -- General
-import Data.Foldable (for_)
-import Data.Maybe
-import Data.Tuple
+import BasePrelude hiding (second)
 -- Monad transformers
 import Control.Monad.Writer
--- Text
-import Data.Char
 -- Time
 import Data.Time
 import Data.Time.Zones

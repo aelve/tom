@@ -4,7 +4,8 @@ ViewPatterns,
 DeriveGeneric,
 OverloadedStrings,
 TemplateHaskell,
-RankNTypes
+RankNTypes,
+NoImplicitPrelude
   #-}
 
 
@@ -33,10 +34,9 @@ where
 
 
 -- General
-import           Control.Monad
-import           Data.Maybe
+import BasePrelude hiding (second)
 -- Lenses
-import           Lens.Micro.Platform hiding ((.=))
+import           Lens.Micro.Platform hiding ((.=), (&))
 -- Files
 import           System.Directory                   -- directory
 import           System.FilePath                    -- filepath
@@ -59,10 +59,6 @@ import           Data.Aeson as Aeson                -- aeson
 import qualified Data.Aeson.Encode.Pretty as Aeson  -- aeson-pretty
 -- Randomness
 import           System.Random
--- IORef (used for caching the reminders file)
-import           Data.IORef
--- unsafePerformIO
-import           System.IO.Unsafe (unsafePerformIO)
 -- Tom-specific
 import           Tom.When
 import           Tom.Utils
