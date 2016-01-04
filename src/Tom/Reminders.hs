@@ -20,7 +20,7 @@ module Tom.Reminders
   RemindersFile(..),
     remindersOn,
     remindersOff,
-    reminder,
+    reminderByUUID,
   readRemindersFile,
   withRemindersFile,
   enableReminder,
@@ -33,10 +33,8 @@ where
 
 
 -- General
-import           Control.Applicative
 import           Control.Monad
 import           Data.Maybe
-import           Data.Monoid
 -- Lenses
 import           Lens.Micro.Platform hiding ((.=))
 -- Files
@@ -119,8 +117,8 @@ data RemindersFile = RemindersFile {
 makeLenses ''RemindersFile
 
 -- | A traversal which gives you access to a reminder by its 'UUID'.
-reminder :: UUID -> Traversal' RemindersFile Reminder
-reminder uuid = failing (remindersOn . ix uuid) (remindersOff . ix uuid)
+reminderByUUID :: UUID -> Traversal' RemindersFile Reminder
+reminderByUUID uuid = failing (remindersOn . ix uuid) (remindersOff . ix uuid)
 
 nullRemindersFile :: RemindersFile
 nullRemindersFile = RemindersFile {
@@ -200,7 +198,7 @@ disableReminder uuid = withRemindersFile $ \file ->
 
 modifyReminder :: UUID -> (Reminder -> Reminder) -> IO ()
 modifyReminder uuid f = withRemindersFile $ \file ->
-  return $ file & reminder uuid %~ f
+  return $ file & reminderByUUID uuid %~ f
 
 -- | Add a (turned on) reminder. The UUID will be generated automatically.
 addReminder :: Reminder -> IO ()

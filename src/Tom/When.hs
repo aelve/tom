@@ -24,12 +24,13 @@ import Data.Foldable (asum, find)
 import Data.Maybe
 -- Parsing (Read)
 import Text.Read (Read(..))
-import qualified Text.Read as Read (lift)
-import qualified Text.ParserCombinators.ReadP as ReadP hiding (optional)
+import qualified Text.Read as R (lift)
+import qualified Text.ParserCombinators.ReadP as R hiding (optional)
 import Text.ParserCombinators.ReadPrec (ReadPrec)
 -- Parsing (Megaparsec); this one is used more and thus imported unqualified
 import Text.Megaparsec
 import Text.Megaparsec.String
+import Text.Megaparsec.Lexer
 -- Strictness
 import Control.DeepSeq
 -- Text
@@ -39,7 +40,7 @@ import GHC.Generics
 -- Time
 import Data.Time
 import Data.Time.Calendar.MonthDay
-import Data.Time.Zones
+import Data.Time.Zones                         -- tz
 -- Tom-specific
 import Tom.Utils
 
@@ -84,33 +85,23 @@ instance Show When where
 
 instance Read When where
   readPrec = do
-    -- Some local definitions to make life easier (since Parsec steals
-    -- ReadP's names).
-    let lift       = Read.lift
-        char       = ReadP.char
-        between    = ReadP.between
-        munch      = ReadP.munch
-        string     = ReadP.string
-        satisfy    = ReadP.satisfy
-        skipSpaces = ReadP.skipSpaces
-    -- Okay, here goes.
-    lift skipSpaces
-    let wild p = lift (some (char 'x') *> pure Nothing) <|> (Just <$> p)
-    let nonnegative :: (Integral a, Read a) => ReadPrec a
-        nonnegative = lift $ read <$> some (satisfy (`elem` ['0'..'9']))
-    year  <- wild nonnegative <* lift (string "-")
-    month <- wild nonnegative <* lift (string "-")
-    day   <- wild nonnegative
+    R.lift R.skipSpaces
+    let wild p = R.lift (some (R.char 'x') *> pure Nothing) <|> (Just <$> p)
+    let r_nonnegative :: (Integral a, Read a) => ReadPrec a
+        r_nonnegative = R.lift $ read <$> some (R.satisfy (`elem` ['0'..'9']))
+    year  <- wild r_nonnegative <* R.lift (R.string "-")
+    month <- wild r_nonnegative <* R.lift (R.string "-")
+    day   <- wild r_nonnegative
     weekdays <- optional readPrec
-    lift (string ",")
-    hour   <- wild nonnegative <* lift (string ".")
-    minute <- wild nonnegative <* lift (string ":")
-    second <- wild nonnegative
+    R.lift (R.string ",")
+    hour   <- wild r_nonnegative <* R.lift (R.string ".")
+    minute <- wild r_nonnegative <* R.lift (R.string ":")
+    second <- wild r_nonnegative
     let parseTZName name = case tzNameToOlson name of
           Nothing -> fail ("unknown time zone name: '" ++ name ++ "'")
           Just tz -> return tz
-    timezone <- lift . optional $
-      parseTZName =<< between (char '(') (char ')') (munch (/= ')'))
+    timezone <- R.lift . optional $
+      parseTZName =<< between (R.char '(') (R.char ')') (R.munch (/= ')'))
     return Mask{..}
 
 instance NFData When
@@ -122,10 +113,6 @@ type WhenParser = Parser (IO When)
 -- | All mask parsers exported by this module.
 allWhenParsers :: [WhenParser]
 allWhenParsers = [momentP, wildcardP, durationP]
-
--- | A parser for nonnegative integers (0, 1, 2, ...).
-nonnegative :: (Read a, Integral a) => Parser a
-nonnegative = read <$> some digitChar
 
 -- | A parser for “am”/“pm”, returning the function to apply to hours to get
 -- the corrected version.
@@ -210,11 +197,11 @@ momentP = do
     h <- optional nonnegative
     -- If hour is set and minute isn't, it's assumed to be 0, *not*
     -- omitted. For instance, “10am” really means “10.00:00”.
-    m <- Just <$> (char '.' *> nonnegative)           <|>
-         pure (if isJust h then Just 0 else Nothing)
+    m <- option (if isJust h then Just 0 else Nothing)
+           (Just <$> (char '.' *> nonnegative))
     -- Same for minute/second.
-    s <- Just <$> (char ':' *> nonnegative)           <|>
-         pure (if isJust m then Just 0 else Nothing)
+    s <- option (if isJust m then Just 0 else Nothing)
+           (Just <$> (char ':' *> nonnegative))
     -- “am”/“pm”. 
     fromAMPM <- parseAMPM
     -- Timezone.
@@ -256,22 +243,22 @@ momentP = do
           -- If we *have* to use mbMinute, we only decide whether we have to
           -- increment the second or not.
           Just y
-            | x < y  -> Just (y, zeroSecond)
-            | x == y -> (y,) <$> nextSecond rest
-            | x > y  -> Nothing
+            | x < y     -> Just (y, zeroSecond)
+            | x == y    -> (y,) <$> nextSecond rest
+            | otherwise -> Nothing
           -- If we don't have to use mbMinute, we try to increment the second
           -- first, and increase the minute if we can't increment the second.
-          Nothing    -> (x,) <$> nextSecond rest  <|>
-                        (guard (x <= 58) >> return (x+1, zeroSecond))
+          Nothing       -> (x,) <$> nextSecond rest  <|>
+                           (guard (x <= 58) >> return (x+1, zeroSecond))
 
     -- nextHour is the same as nextMinute.
     let nextHour (x, rest) = case mbHour of
           Just y
-            | x < y  -> Just (y, zeroMinute)
-            | x == y -> (y,) <$> nextMinute rest
-            | x > y  -> Nothing
-          Nothing    -> (x,) <$> nextMinute rest  <|>
-                        (guard (x <= 22) >> return (x+1, zeroMinute))
+            | x < y     -> Just (y, zeroMinute)
+            | x == y    -> (y,) <$> nextMinute rest
+            | otherwise -> Nothing
+          Nothing       -> (x,) <$> nextMinute rest  <|>
+                           (guard (x <= 22) >> return (x+1, zeroMinute))
 
     -- nextDay is special – whether you can increment the day or not depends
     -- on the month. Therefore, it has to be passed the number of days in the
@@ -282,11 +269,11 @@ momentP = do
           -- afterwards.
           (x', rest') <- case mbDay of
             Just y
-              | x < y  -> Just (y, zeroHour)
-              | x == y -> (y,) <$> nextHour rest
-              | x > y  -> Nothing
-            Nothing    -> (x,) <$> nextHour rest  <|>
-                          Just (x+1, zeroHour)
+              | x < y     -> Just (y, zeroHour)
+              | x == y    -> (y,) <$> nextHour rest
+              | otherwise -> Nothing
+            Nothing       -> (x,) <$> nextHour rest  <|>
+                             Just (x+1, zeroHour)
           guard (x' <= days)
           return (x', rest')
 
@@ -297,10 +284,10 @@ momentP = do
     -- to make sure we touch at least one month with 31 days in it.
     let nextMonth isLeap (x, rest) = case mbMonth of
           Just y
-            | x < y  -> Just (y, zeroDay)
-            | x == y -> (y,) <$> nextDay (monthLength isLeap y) rest
-            | x > y  -> Nothing
-          Nothing    -> asum
+            | x < y     -> Just (y, zeroDay)
+            | x == y    -> (y,) <$> nextDay (monthLength isLeap y) rest
+            | otherwise -> Nothing
+          Nothing       -> asum
             -- Increment day.
             [ (x,) <$> nextDay (monthLength isLeap x) rest
             -- Increment month once, and check whether the day fits.
@@ -316,10 +303,10 @@ momentP = do
     -- Phew, almost done.
     let nextYear (x, rest) = case mbYear of
           Just y
-            | x < y  -> Just (y, zeroMonth)
-            | x == y -> (y,) <$> nextMonth (isLeapYear y) rest
-            | x > y  -> Nothing
-          Nothing    -> asum
+            | x < y     -> Just (y, zeroMonth)
+            | x == y    -> (y,) <$> nextMonth (isLeapYear y) rest
+            | otherwise -> Nothing
+          Nothing       -> asum
             -- Increment month.
             [ (x,) <$> nextMonth (isLeapYear x) rest
             -- Increment year once, see if day and month fit. (They can only
@@ -428,7 +415,8 @@ followed by one of:
 -}
 durationP :: WhenParser
 durationP = do
-  let thingP = do
+  let thingP :: Parser Integer
+      thingP = do
         n <- nonnegative
         choice [
           string "h" *> pure (n*3600),
@@ -448,3 +436,6 @@ durationP = do
       second   = Just cSecond,
       weekdays = Nothing,
       timezone = tzNameToOlson "UTC" }
+
+nonnegative :: Integral a => Parser a
+nonnegative = fromInteger <$> integer

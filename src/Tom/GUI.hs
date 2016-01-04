@@ -7,8 +7,6 @@ module Tom.GUI
 where
 
 
--- General
-import Data.Foldable
 -- GTK
 import Graphics.UI.Gtk
 -- Text
@@ -125,14 +123,13 @@ runGUI = do
           buffer <- get reminderEntry textViewBuffer
           get buffer textBufferText
         time <- getCurrentTime
-        let reminder = Reminder {
-              _schedule         = _schedule,
-              _message          = _message,
-              _created          = time,
-              _lastSeen         = time,
-              _lastAcknowledged = time,
-              _snoozedUntil     = time }
-        addReminder reminder
+        addReminder $ Reminder {
+          _schedule         = _schedule,
+          _message          = _message,
+          _created          = time,
+          _lastSeen         = time,
+          _lastAcknowledged = time,
+          _snoozedUntil     = time }
         widgetDestroy window
   -- Show the window and start GTK event loop.
   widgetShowAll window

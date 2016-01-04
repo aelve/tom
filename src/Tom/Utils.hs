@@ -74,7 +74,7 @@ tzAbbreviations = execWriter $ do
   "UTC+0" ==> "Etc/UTC"
   "GMT-0" ==> "Etc/UTC"
   "GMT+0" ==> "Etc/UTC"
-  for_ [1..12] $ \x -> do
+  for_ [1..12 :: Int] $ \x -> do
     let sx = show x
     ("UTC-" ++ sx) ==> ("Etc/GMT+" ++ sx)
     ("UTC+" ++ sx) ==> ("Etc/GMT-" ++ sx)

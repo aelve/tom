@@ -26,7 +26,7 @@ import           Data.List (isInfixOf)
 import           Text.Printf
 import           Data.Char
 -- GTK
-import           Graphics.UI.Gtk hiding (set)
+import           Graphics.UI.Gtk hiding (set, currentTime)
 import qualified Graphics.UI.Gtk as Gtk
 -- UUID
 import           Data.UUID hiding (null)
@@ -62,15 +62,18 @@ After right-clicking it twice, it's going to say “15 minutes”, and its multi
 @
 -}
 data AlertButton = AlertButton {
-  _baseRate   :: Integer,
-  _baseUnit   :: TimeUnit,
+  baseRate    :: Integer,
+  baseUnit    :: TimeUnit,
   _multiplier :: Integer }
 
+-- Note that the only lens that will be created is “multiplier”; other lenses
+-- aren't needed and if we create them, GHC will warn us about unused
+-- definitions.
 makeLenses ''AlertButton
 
 makeButtonLabel :: AlertButton -> String
 makeButtonLabel AlertButton{..} =
-  printf "%d%s later" (_multiplier*_baseRate) (unitAbbr _baseUnit)
+  printf "%d%s later" (_multiplier*baseRate) (unitAbbr baseUnit)
 
 unitAbbr :: TimeUnit -> String
 unitAbbr Minute = "m"
@@ -78,8 +81,8 @@ unitAbbr Hour   = "h"
 
 applyButton :: AlertButton -> UTCTime -> UTCTime
 applyButton AlertButton{..} time = do
-  let n = _baseRate*_multiplier
-  case _baseUnit of
+  let n = baseRate*_multiplier
+  case baseUnit of
     Minute -> addUTCTime (fromInteger n * 60) time
     Hour   -> addUTCTime (fromInteger n * 3600) time
 
@@ -252,15 +255,17 @@ responseHandler uuid varState alertWindow responseId = do
   currentTime <- getCurrentTime
   modifyReminder uuid $ lastSeen .~ currentTime
   case responseId of
-    ResponseNo -> disableReminder uuid
-    ResponseYes -> modifyReminder uuid $
-                     lastAcknowledged .~ currentTime
+    ResponseNo ->
+      disableReminder uuid
+    ResponseYes ->
+      modifyReminder uuid $
+        lastAcknowledged .~ currentTime
     ResponseUser index -> do
       alertState <- readIORef varState
       let buttonState = alertState ^?! buttons . ix index
       modifyReminder uuid $
         snoozedUntil .~ applyButton buttonState currentTime
-    other -> return ()
+    _other -> return ()
   widgetDestroy alertWindow
 
 -- | Highlight links in reminder text.
@@ -280,8 +285,9 @@ highlightLinks ('<':s) = case break (== '>') s of
     -- link-detection algorithm: if any “.” is followed by something which
     -- isn't a space and isn't “.” (to avoid “...”), it's a link
     | or [not (isSpace c || c == '.') | ('.', c) <- pairs link] -> do
-        let httpLink = if "://" `isInfixOf` link
-                         then link else "http://" ++ link
+        let httpLink
+              | "://" `isInfixOf` link = link
+              | otherwise              = "http://" ++ link
         printf "<a href=\"%s\">%s</a>" httpLink link ++
           highlightLinks (tail rest)
     -- otherwise, not a link
