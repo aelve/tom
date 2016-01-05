@@ -29,8 +29,6 @@ import Text.Megaparsec.String
 import Text.Megaparsec.Lexer
 -- Strictness
 import Control.DeepSeq
--- Text
-import Text.Printf
 -- Time
 import Data.Time
 import Data.Time.Clock.TAI

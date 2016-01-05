@@ -12,8 +12,6 @@ import BasePrelude hiding (try)
 import Lens.Micro.Platform
 -- Parsing
 import Text.Megaparsec
--- Text
-import Text.Printf
 -- Time
 import Data.Time
 -- Strictness

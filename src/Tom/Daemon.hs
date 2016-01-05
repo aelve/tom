@@ -19,8 +19,6 @@ import           Lens.Micro.Platform hiding ((&))
 -- Containers
 import qualified Data.Map as M
 import           Data.Map (Map)
--- Text
-import           Text.Printf
 -- GTK
 import           Graphics.UI.Gtk hiding (set, currentTime)
 import qualified Graphics.UI.Gtk as Gtk
