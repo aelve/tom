@@ -33,6 +33,7 @@ import Control.DeepSeq
 import Text.Printf
 -- Time
 import Data.Time
+import Data.Time.Clock.TAI
 import Data.Time.Calendar.MonthDay
 import Data.Time.Zones                         -- tz
 -- Tom-specific
@@ -50,6 +51,8 @@ data When
       second   :: Maybe Int,
       weekdays :: Maybe [Int],    -- ^ Numbers between 1 and 7.
       timezone :: Maybe String }  -- ^ 'Nothing' = always use local timezone.
+  | Moment {
+      moment   :: AbsoluteTime }
   deriving (Eq, Generic)
 
 -- Examples of format used by Read and Show instances of Mask:
@@ -76,27 +79,40 @@ instance Show When where
       (maybe "" show weekdays)
       (mb 2 hour) (mb 2 minute) (mb 2 second)
       (maybe "" (\s -> "(" ++ olsonToTZName s ++ ")") timezone)
+  show Moment{..} = "moment " ++ showAbsoluteTime moment
 
 instance Read When where
-  readPrec = do
-    R.lift R.skipSpaces
-    let wild p = R.lift (some (R.char 'x') *> pure Nothing) <|> (Just <$> p)
-    let r_nonnegative :: (Integral a, Read a) => ReadPrec a
-        r_nonnegative = R.lift $ read <$> some (R.satisfy (`elem` ['0'..'9']))
-    year  <- wild r_nonnegative <* R.lift (R.string "-")
-    month <- wild r_nonnegative <* R.lift (R.string "-")
-    day   <- wild r_nonnegative
-    weekdays <- optional readPrec
-    R.lift (R.string ",")
-    hour   <- wild r_nonnegative <* R.lift (R.string ".")
-    minute <- wild r_nonnegative <* R.lift (R.string ":")
-    second <- wild r_nonnegative
-    let parseTZName name = case tzNameToOlson name of
-          Nothing -> fail ("unknown time zone name: '" ++ name ++ "'")
-          Just tz -> return tz
-    timezone <- R.lift . optional $
-      parseTZName =<< between (R.char '(') (R.char ')') (R.munch (/= ')'))
-    return Mask{..}
+  readPrec = R.lift R.skipSpaces *> choice [readMask, readMoment]
+    where
+      -- some utils
+      r_string :: String -> ReadPrec String
+      r_string = R.lift . R.string
+      r_nonnegative :: (Integral a, Read a) => ReadPrec a
+      r_nonnegative = R.lift $ read <$> some (R.satisfy isDigit)
+      -- a parser for Mask
+      readMask = do
+        let wild p = R.lift (some (R.char 'x') *> pure Nothing) <|>
+                     (Just <$> p)
+        year  <- wild r_nonnegative <* r_string "-"
+        month <- wild r_nonnegative <* r_string "-"
+        day   <- wild r_nonnegative
+        weekdays <- optional readPrec
+        r_string ","
+        hour   <- wild r_nonnegative <* r_string "."
+        minute <- wild r_nonnegative <* r_string ":"
+        second <- wild r_nonnegative
+        let parseTZName name = case tzNameToOlson name of
+              Nothing -> fail ("unknown time zone name: '" ++ name ++ "'")
+              Just tz -> return tz
+        timezone <- R.lift . optional $
+          parseTZName =<< between (R.char '(') (R.char ')') (R.munch (/= ')'))
+        return Mask{..}
+      -- a parser for Moment
+      readMoment = do
+        r_string "moment"
+        skipSome (R.lift (R.satisfy isSpace))
+        moment <- readAbsoluteTime
+        return Moment{..}
 
 instance NFData When
 
@@ -416,20 +432,22 @@ durationP = do
           string "h" *> pure (n*3600),
           string "m" *> pure (n*60),
           string "s" *> pure n ]
-  total <- sum <$> some thingP
+  totalSeconds <- sum <$> some thingP
   return $ do
-    time <- getCurrentTime
-    let ((cYear,cMonth,cDay),(cHour,cMinute,cSecond)) =
-          expandTime utcTZ (addUTCTime (fromIntegral total) time)
-    return Mask {
-      year     = Just cYear,
-      month    = Just cMonth,
-      day      = Just cDay,
-      hour     = Just cHour,
-      minute   = Just cMinute,
-      second   = Just cSecond,
-      weekdays = Nothing,
-      timezone = tzNameToOlson "UTC" }
+    time <- getAbsoluteTime
+    return $ Moment {
+      moment = addAbsoluteTime (secondsToDiffTime totalSeconds) time }
 
 nonnegative :: Integral a => Parser a
 nonnegative = fromInteger <$> integer
+
+showAbsoluteTime :: AbsoluteTime -> String
+showAbsoluteTime = ("TAI " ++) . show .
+                   utcToLocalTime utc . taiToUTCTime (const 0)
+
+readAbsoluteTime :: ReadPrec AbsoluteTime
+readAbsoluteTime = do
+  R.lift (R.skipSpaces *> R.string "TAI")
+  skipSome (R.lift (R.satisfy isSpace))
+  localTime <- readPrec
+  return (utcToTAITime (const 0) (localTimeToUTC utc localTime))

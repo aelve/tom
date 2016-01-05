@@ -32,6 +32,7 @@ import           Data.Time
 import           Control.Monad.IO.Class
 -- Tom-specific
 import           Tom.Reminders
+import           Tom.When
 import           Tom.Utils
 
 
@@ -253,9 +254,15 @@ responseHandler uuid varState alertWindow responseId = do
   case responseId of
     ResponseNo ->
       disableReminder uuid
-    ResponseYes ->
+    ResponseYes -> do
       modifyReminder uuid $
         lastAcknowledged .~ currentTime
+      -- If the reminder was a “Moment”, we can turn it off because it'll
+      -- never fire again.
+      do file <- readRemindersFile
+         case file ^? reminderByUUID uuid . schedule of
+           Just Moment{} -> disableReminder uuid
+           _other        -> return ()
     ResponseUser buttonIndex -> do
       alertState <- readIORef varState
       let buttonState = alertState ^?! buttons . ix buttonIndex

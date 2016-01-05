@@ -35,6 +35,7 @@ executable tom
                      , filelock                 >= 0.1
                      , filepath                 >= 1.3
                      , gtk3                     >= 0.13
+                     , leapseconds-announced
                      , microlens-platform       >= 0.1.1
                      , mtl                      >= 2
                      , megaparsec               == 4.2.*

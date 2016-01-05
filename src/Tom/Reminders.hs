@@ -220,6 +220,10 @@ withRemindersFile func = do
 
 -- | Check whether there's -a moment of time which matches the schedule- in
 -- a time interval.
+--
+-- TODO: timeInInterval doesn't work for leap seconds
+--
+-- TODO: timeInInterval probably fails in presence of DST
 timeInInterval
   :: (Int, Int, Int)
   -> (Int, Int, Int)
@@ -234,28 +238,12 @@ timeInInterval (ha, ma, sa) (hb, mb, sb) (hx, mx, sx) =
                         , (ha,ma,sa) <= (h,m,s)
                         , (hb,mb,sb) >= (h,m,s) ]      
 
--- | Round 'UTCTime' down to have a whole number of seconds.
-floorUTCTime :: UTCTime -> UTCTime
-floorUTCTime t = t {utctDayTime = fromInteger (floor (utctDayTime t))}
-
--- | Round 'UTCTime' up to have a whole number of seconds.
---
--- It ignores leap seconds (the result here was expected to be “23:59:60”):
---
--- >>> ceilingUTCTime (read "2012-06-30 23:59:59.99")
--- 2012-07-01 00:00:00 UTC
-ceilingUTCTime :: UTCTime -> UTCTime
-ceilingUTCTime t
-  | d >= 86400 = t { utctDay     = addDays 1 (utctDay t),
-                     utctDayTime = 0 }
-  | otherwise  = t { utctDayTime = fromInteger d }
-  where
-    d = ceiling (utctDayTime t)
-
 -- | Check whether a reminder has fired in a time interval. Not as efficient
 -- as it could be (it takes O(days in the interval)). 'IO' is needed to look
 -- up the timezone from the name contained in the schedule.
 isReminderInInterval :: (UTCTime, UTCTime) -> When -> IO Bool
+isReminderInInterval (ceilingUTCTime -> a, floorUTCTime -> b) Moment{..} =
+  return (utcToAbsoluteTime a <= moment && moment <= utcToAbsoluteTime b)
 isReminderInInterval (ceilingUTCTime -> a, floorUTCTime -> b) Mask{..} = do
   -- If timezone is specified in the reminder, use it, and otherwise use the
   -- local one.
@@ -276,6 +264,8 @@ isReminderInInterval (ceilingUTCTime -> a, floorUTCTime -> b) Mask{..} = do
 
   -- endA   = “when does the first day end”
   -- startB = “when does the last day start”
+  --
+  -- TODO: it should be (23,59,60) when a leap second is involved
   let (endA, startB) | dateA == dateB = (timeB, timeA)
                      | otherwise      = ((23,59,59),(0,0,0))
 
