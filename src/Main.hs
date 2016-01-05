@@ -34,9 +34,9 @@ main = do
     ["--list"]         -> listReminders "created"
     ["--list", method] -> listReminders method
     ["--daemon"]       -> runDaemon
-    (sch:msg)          -> scheduleReminder sch (T.pack (unwords msg))
+    (sch:msg)          -> scheduleReminder (T.pack sch) (T.pack (unwords msg))
 
-scheduleReminder :: String -> Text -> IO ()
+scheduleReminder :: Text -> Text -> IO ()
 scheduleReminder scheduleStr msg = do
   time <- getCurrentTime
   -- Forcing evaluation because otherwise, if something fails, it'll fail

@@ -25,7 +25,7 @@ import qualified Text.Read as R
 import qualified Text.ParserCombinators.ReadP as R
 -- Parsing (Megaparsec); this one is used more and thus imported unqualified
 import Text.Megaparsec
-import Text.Megaparsec.String
+import Text.Megaparsec.Text
 import Text.Megaparsec.Lexer
 -- Strictness
 import Control.DeepSeq

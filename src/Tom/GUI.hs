@@ -16,6 +16,7 @@ import BasePrelude hiding (on, try)
 import Graphics.UI.Gtk
 -- Text
 import qualified Data.Text as T
+import Data.Text (Text)
 -- IO
 import Control.Monad.IO.Class
 -- Time
@@ -111,10 +112,11 @@ runGUI = do
   --
   scheduleEntry `on` editableChanged $ do
     t <- get scheduleEntry entryText
-    case (t, parseSchedule t) of
-      ("", _)       -> set scheduleInfo [labelText := "enter the schedule"]
-      (_, Left err) -> set scheduleInfo [labelText := err]
-      (_, Right _)  -> set scheduleInfo [labelText := "schedule is valid"]
+    if T.null t
+      then set scheduleInfo [labelText := "enter the schedule"]
+      else case parseSchedule t of
+             Left err -> set scheduleInfo [labelText := err]
+             Right _  -> set scheduleInfo [labelText := "schedule is valid"]
   -- When Enter is pressed in the reminder entry box, schedule the reminder.
   reminderEntry `on` keyPressEvent $ tryEvent $ do
     "Return" <- T.unpack <$> eventKeyName
@@ -140,7 +142,7 @@ runGUI = do
   widgetShowAll window
   mainGUI
 
-parseSchedule :: String -> Either String (IO When)
+parseSchedule :: Text -> Either String (IO When)
 parseSchedule s = either (Left . show) Right $ parse scheduleP "" s
   where
     scheduleP = choice $ map (\p -> try (p <* eof)) allWhenParsers
