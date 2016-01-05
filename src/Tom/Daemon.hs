@@ -1,6 +1,9 @@
 {-# LANGUAGE
 RecordWildCards,
 TemplateHaskell,
+OverloadedStrings,
+ViewPatterns,
+MultiWayIf,
 NoImplicitPrelude
   #-}
 
@@ -16,6 +19,9 @@ where
 import BasePrelude hiding (on)
 -- Lenses
 import           Lens.Micro.Platform hiding ((&))
+-- Text
+import qualified Data.Text as T
+import Data.Text (Text)
 -- Containers
 import qualified Data.Map as M
 import           Data.Map (Map)
@@ -31,7 +37,6 @@ import           Control.Monad.IO.Class
 -- Tom-specific
 import           Tom.Reminders
 import           Tom.When
-import           Tom.Utils
 
 
 data TimeUnit = Minute | Hour
@@ -191,8 +196,8 @@ createAlert uuid reminder varState = do
   -- Add “... later” buttons from state (or default buttons).
   snoozeButtons <- addSnoozeButtons varState alertWindow
   -- Add the rest of the buttons.
-  buttonNo  <- dialogAddButton alertWindow "Turn it off" ResponseNo
-  buttonYes <- dialogAddButton alertWindow "Thanks!"     ResponseYes
+  buttonNo  <- dialogAddButton alertWindow ("Turn it off" :: Text) ResponseNo
+  buttonYes <- dialogAddButton alertWindow ("Thanks!"     :: Text) ResponseYes
   -- Assign actions to buttons.
   alertWindow `on` response $ \responseId ->
     responseHandler uuid varState alertWindow responseId
@@ -270,28 +275,40 @@ responseHandler uuid varState alertWindow responseId = do
   widgetDestroy alertWindow
 
 -- | Highlight links in reminder text.
-highlightLinks :: String -> String
+highlightLinks :: Text -> Text
 highlightLinks "" = ""
-highlightLinks ('>':s) = "&gt;" ++ highlightLinks s
-highlightLinks ('<':s) = case break (== '>') s of
-  -- “<” doesn't have a closing “>”, so it's not a link
-  (_, "") -> "&lt;" ++ s
-  (link, rest)
-    -- empty link isn't a link
-    | null link ->
-        "&lt;" ++ highlightLinks rest
-    -- “<” is followed by <not a letter/digit>, so it's not a link
-    | c:_ <- link, not (isLetter c || isDigit c) ->
-        "&lt;" ++ highlightLinks (link ++ rest)
-    -- link-detection algorithm: if any “.” is followed by something which
-    -- isn't a space and isn't “.” (to avoid “...”), it's a link
-    | or [not (isSpace c || c == '.') | ('.', c) <- pairs link] -> do
-        let httpLink
-              | "://" `isInfixOf` link = link
-              | otherwise              = "http://" ++ link
-        printf "<a href=\"%s\">%s</a>" httpLink link ++
-          highlightLinks (tail rest)
-    -- otherwise, not a link
-    | otherwise ->
-        "&lt;" ++ highlightLinks (link ++ rest)
-highlightLinks (c:s) = c : highlightLinks s
+highlightLinks (T.uncons -> Just ('>', s)) =
+  "&gt;" <> highlightLinks s
+highlightLinks (T.uncons -> Just ('<', s)) = do
+  let (link, rest) = T.break (== '>') s
+  if -- “<” doesn't have a closing “>”, so it's not a link
+     | T.null rest -> "&lt;" <> highlightLinks s
+     -- if it's a link, let's convert it
+     | isLink link -> do
+         let httpLink
+               | "://" `T.isInfixOf` link = link
+               | otherwise                = "http://" <> link
+             markup = T.pack (printf "<a href=\"%s\">%s</a>" httpLink link)
+         markup <> highlightLinks (T.tail rest)
+     -- otherwise, not a link
+     | otherwise -> "&lt;" <> highlightLinks s
+highlightLinks s =
+  let (text, rest) = T.break (\c -> c == '<' || c == '>') s
+  in  text <> highlightLinks rest
+
+{- |
+Link-detection algorithm:
+
+  * A link can't be empty.
+
+  * A link has to start with a letter or a digit.
+
+  * There has to be a “.” followed by something that isn't a space and isn't a “.” (to avoid “...”).
+-}
+isLink :: Text -> Bool
+isLink s = and [
+  not (T.null s),
+  isDigit (T.head s) || isLetter (T.head s),
+  T.any (== '.') s,
+  or $ do ('.', c) <- T.zip s (T.tail s)
+          return (not (isSpace c) && c /= '.') ]

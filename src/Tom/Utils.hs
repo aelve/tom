@@ -17,8 +17,6 @@ module Tom.Utils
   getAbsoluteTime,
   utcToAbsoluteTime,
   absoluteTimeToUTC,
-  -- * Lists
-  pairs,
 )
 where
 
@@ -120,13 +118,3 @@ utcToAbsoluteTime = utcToTAITime lst
 
 absoluteTimeToUTC :: AbsoluteTime -> UTCTime
 absoluteTimeToUTC = taiToUTCTime lst
-
-{- |
-An example:
-
->>> pairs "abc"
-[('a','b'),('b','c')]
--}
-pairs :: [a] -> [(a, a)]
-pairs [] = []
-pairs s  = zip s (tail s)

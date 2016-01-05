@@ -10,6 +10,9 @@ module Main (main) where
 import BasePrelude hiding (try)
 -- Lenses
 import Lens.Micro.Platform
+-- Text
+import Data.Text (Text)
+import qualified Data.Text as T
 -- Parsing
 import Text.Megaparsec
 -- Time
@@ -31,9 +34,9 @@ main = do
     ["--list"]         -> listReminders "created"
     ["--list", method] -> listReminders method
     ["--daemon"]       -> runDaemon
-    (sch:msg)          -> scheduleReminder sch (unwords msg)
+    (sch:msg)          -> scheduleReminder sch (T.pack (unwords msg))
 
-scheduleReminder :: String -> String -> IO ()
+scheduleReminder :: String -> Text -> IO ()
 scheduleReminder scheduleStr msg = do
   time <- getCurrentTime
   -- Forcing evaluation because otherwise, if something fails, it'll fail

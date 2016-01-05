@@ -37,6 +37,8 @@ where
 import BasePrelude hiding (second)
 -- Lenses
 import           Lens.Micro.Platform hiding ((.=), (&))
+-- Text
+import Data.Text (Text)
 -- Files
 import           System.Directory                   -- directory
 import           System.FilePath                    -- filepath
@@ -70,7 +72,7 @@ data Reminder
       -- | When the reminder should fire
       _schedule         :: When,
       -- | Message to be shown
-      _message          :: String,
+      _message          :: Text,
       -- | When the reminder was created
       _created          :: UTCTime,
       -- | When the reminder was last seen by the user (this is used to avoid
