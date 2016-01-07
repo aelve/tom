@@ -18,25 +18,25 @@ where
 -- General
 import BasePrelude hiding (on)
 -- Lenses
-import           Lens.Micro.Platform hiding ((&))
+import Lens.Micro.Platform hiding ((&))
 -- Text
-import qualified Data.Text as T
 import Data.Text (Text)
+import qualified Data.Text as T
 -- Containers
+import Data.Map (Map)
 import qualified Data.Map as M
-import           Data.Map (Map)
 -- GTK
-import           Graphics.UI.Gtk hiding (set, currentTime)
+import Graphics.UI.Gtk hiding (set, currentTime)
 import qualified Graphics.UI.Gtk as Gtk
 -- UUID
-import           Data.UUID hiding (null)
+import Data.UUID hiding (null)
 -- Time
-import           Data.Time
+import Data.Time
 -- IO
-import           Control.Monad.IO.Class
+import Control.Monad.IO.Class
 -- Tom-specific
-import           Tom.Reminders
-import           Tom.When
+import Tom.Reminders
+import Tom.When
 
 
 data TimeUnit = Minute | Hour
