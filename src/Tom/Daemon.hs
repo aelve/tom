@@ -4,6 +4,7 @@ TemplateHaskell,
 OverloadedStrings,
 ViewPatterns,
 MultiWayIf,
+ScopedTypeVariables,
 NoImplicitPrelude
   #-}
 
@@ -16,9 +17,9 @@ where
 
 
 -- General
-import BasePrelude hiding (on)
+import BasePrelude hiding (on, second)
 -- Lenses
-import Lens.Micro.Platform hiding ((&))
+import Lens.Micro.Platform hiding ((&), set)
 -- Text
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -26,8 +27,7 @@ import qualified Data.Text as T
 import Data.Map (Map)
 import qualified Data.Map as M
 -- GTK
-import Graphics.UI.Gtk hiding (set, currentTime)
-import qualified Graphics.UI.Gtk as Gtk
+import Graphics.UI.Gtk hiding (currentTime, edited)
 -- UUID
 import Data.UUID hiding (null)
 -- Time
@@ -86,7 +86,8 @@ applyButton AlertButton{..} time = do
     Hour   -> addUTCTime (fromInteger n * 3600) time
 
 data AlertState = AlertState {
-  _buttons :: [AlertButton] }
+  _buttons  :: [AlertButton],
+  _edited   :: Maybe Text }
 
 makeLenses ''AlertState
 
@@ -95,9 +96,10 @@ defaultAlertState = AlertState {
   _buttons = [
       AlertButton 5  Minute 1,
       AlertButton 1  Hour   1,
-      AlertButton 12 Hour   1 ] }
+      AlertButton 12 Hour   1 ],
+  _edited = Nothing }
 
-type AlertWindow = MessageDialog
+type AlertWindow = Dialog
 
 data Alert = Alert {
   _window   :: AlertWindow,
@@ -178,21 +180,125 @@ isExpired currentTime reminder = do
                  (reminder ^. schedule)
   return $ notSnoozedAnymore && (reexpired || (seenLongAgo && forgotten))
 
+makeAlertWindow
+  :: Text                -- ^ Starting text
+  -> Bool                -- ^ False = start as label, True = start as editbox
+  -> Text                -- ^ Caption
+  -> (Text -> IO ())     -- ^ On edit
+  -> (Text -> IO ())     -- ^ On finishing edit
+  -> IO Dialog
+makeAlertWindow startingText startEditable caption onEdit onCommit = do
+  dialog <- dialogNew
+  set dialog [
+    windowResizable := False ]
+  windowSetGeometryHints dialog (Nothing :: Maybe Window)
+    (Just (300, -1))  -- minWidth, minHeight
+    (Just (300, -1))  -- maxWidth, maxHeight
+    Nothing
+    Nothing
+    Nothing
+  content <- castToBox <$> dialogGetContentArea dialog
+
+  label <- labelNew (Just (highlightLinks startingText))
+  labelBox <- eventBoxNew
+  labelBox `containerAdd` label
+  set label [
+    labelSelectable    := True,
+    labelWrap          := True,
+    labelMaxWidthChars := 50,
+    labelUseMarkup     := True,
+    miscXalign         := 0,
+    widgetMarginLeft   := 20,
+    widgetMarginRight  := 20,
+    widgetMarginTop    := 20,
+    widgetMarginBottom := 20 ]
+
+  text <- textViewNew
+  textFrame <- frameNew
+  textFrame `containerAdd` text
+  buffer <- get text textViewBuffer
+  -- This is done so that onEdit wouldn't be called when ‘text’ is first
+  -- populated with startingText.
+  set buffer [
+    textBufferText := startingText ]
+  set text [
+    textViewLeftMargin  := 7,
+    textViewRightMargin := 7,
+    textViewWrapMode    := WrapWord ]
+  set textFrame [
+    widgetMarginLeft   := 12,  -- 20−7−1 (we want the *text* to remain
+    widgetMarginRight  := 12,  -- at the same position) (1 = border width)
+    widgetMarginTop    := 20,
+    widgetMarginBottom := 20,
+    frameShadowType    := ShadowEtchedIn ]
+
+  let labelToText = do
+        Rectangle _ _ width _ <- widgetGetAllocation labelBox
+        content `containerRemove` labelBox
+        content `containerAdd` textFrame
+        widgetShowAll textFrame
+        -- don't know why −20; should investigate (widths and size requests
+        -- and margins are kinda murky)
+        widgetSetSizeRequest textFrame (width - 20) (-1)
+        textBufferPlaceCursor buffer =<< textBufferGetEndIter buffer
+        widgetGrabFocus text
+      textToLabel = do
+        content `containerRemove` textFrame
+        content `containerAdd` labelBox
+        widgetShowAll labelBox
+        textContents <- get buffer textBufferText
+        set label [labelText := highlightLinks textContents]
+        onCommit textContents
+        -- todo: remove selection in text label
+
+  if startEditable
+    then content `containerAdd` textFrame
+    else content `containerAdd` labelBox
+
+  labelCaption <- labelNew (Just caption)
+  set labelCaption [
+    labelSelectable    := True,
+    miscXalign         := 0,
+    widgetMarginLeft   := 20,
+    widgetMarginRight  := 20,
+    widgetMarginTop    := 0,
+    widgetMarginBottom := 20 ]
+
+  boxPackEnd content labelCaption PackNatural 0
+
+  buffer `on` bufferChanged $
+    onEdit =<< get buffer textBufferText
+  labelBox `on` buttonPressEvent $ tryEvent $ do
+    DoubleClick <- eventClick
+    LeftButton  <- eventButton
+    liftIO $ labelToText
+  -- todo: label on Enter should turn into text
+  text `on` keyPressEvent $ tryEvent $ do
+    "Return" <- T.unpack <$> eventKeyName
+    [] <- eventModifier  -- so that Shift+Enter would work
+    liftIO $ textToLabel
+
+  widgetShowAll dialog
+  return dialog
+
 createAlert :: UUID -> Reminder -> IORef AlertState -> IO Alert
 createAlert uuid reminder varState = do
-  let dialogText :: String
-      dialogText = printf "Reminder: %s\n\n(%s)"
-        (highlightLinks (reminder ^. message))
-        (show (reminder ^. schedule))  
-  alertWindow <- messageDialogNew
-                   Nothing
-                   []       -- flags
-                   MessageInfo
-                   ButtonsNone
-                   dialogText
-  -- Enable dialog markup (so that links added by 'highlightLinks' would be
-  -- rendered as links).
-  Gtk.set alertWindow [messageDialogUseMarkup := True]
+  let onEdit s = do
+        modifyIORef varState $ edited .~ Just s
+  let onCommit s = do
+        modifyReminder uuid $ message .~ s
+        modifyIORef varState $ edited .~ Nothing
+  (dialogMessage, startEditable) <- do
+    mbE <- view edited <$> readIORef varState
+    case mbE of
+      Nothing -> return (reminder ^. message, False)
+      Just e  -> return (e, True)
+  alertWindow <- makeAlertWindow
+                   dialogMessage
+                   startEditable
+                   (T.pack (show (reminder ^. schedule)))  -- caption
+                   onEdit
+                   onCommit
   -- Add “... later” buttons from state (or default buttons).
   snoozeButtons <- addSnoozeButtons varState alertWindow
   -- Add the rest of the buttons.
@@ -204,13 +310,12 @@ createAlert uuid reminder varState = do
   -- Add a handler: when the alert is shown, block the buttons and create a
   -- timer that would unblock them in 1s (to prevent accidental clicks when
   -- the user is doing something and the alert appears suddenly).
-  alertWindow `on` showSignal $ do
+  alertWindow `on` showSignal $ void $ do
     let allButtons = buttonNo : buttonYes : snoozeButtons
     for_ allButtons $ \button -> widgetSetSensitive button False
     flip timeoutAdd 1000 $ do
       for_ allButtons $ \button -> widgetSetSensitive button True
       return False  -- Don't repeat the timer.
-    return ()
   -- Return created alert.
   return Alert {
     _window   = alertWindow,
