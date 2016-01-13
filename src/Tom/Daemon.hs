@@ -410,7 +410,7 @@ Link-detection algorithm:
 
   * A link has to start with a letter or a digit.
 
-  * There has to be a “.” followed by something that isn't a space and isn't a “.” (to avoid “...”).
+  * There has to be a “.” followed by something that isn't a space and isn't a “.” (to prevent “...” from being perceived as a link).
 -}
 isLink :: Text -> Bool
 isLink s = and [
