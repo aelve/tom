@@ -247,7 +247,9 @@ makeAlertWindow startingText startEditable caption onEdit onCommit = do
         content `containerAdd` labelBox
         widgetShowAll labelBox
         textContents <- get buffer textBufferText
-        set label [labelText := highlightLinks textContents]
+        set label [
+          labelText      := highlightLinks textContents,
+          labelUseMarkup := True ] -- for some reason this has to be set again
         onCommit textContents
         -- todo: remove selection in text label
 
