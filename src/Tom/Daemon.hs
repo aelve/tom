@@ -276,7 +276,7 @@ makeAlertWindow startingText startEditable caption onEdit onCommit = do
     liftIO $ labelToText
   -- todo: label on Enter should turn into text
   text `on` keyPressEvent $ tryEvent $ do
-    "Return" <- T.unpack <$> eventKeyName
+    "Return" :: Text <- eventKeyName
     [] <- eventModifier  -- so that Shift+Enter would work
     liftIO $ textToLabel
 
