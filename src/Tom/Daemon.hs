@@ -132,7 +132,8 @@ checkReminders varAlertMap = withRemindersFile $ \file -> do
   expired <- filterM (isExpired currentTime . snd) (M.assocs (file ^. remindersOn))
   for_ expired $ \(uuid, reminder) -> do
     -- If the old alert is still hanging around, destroy it (and it'll be
-    -- automatically removed from varAlertMap).
+    -- automatically removed from varAlertMap because of the “after
+    -- objectDestroy” handler we add a bit later (just read on)).
     mbOldAlert <- M.lookup uuid <$> readIORef varAlertMap
     case mbOldAlert of
       Just alert -> widgetDestroy (alert ^. window)
@@ -150,7 +151,7 @@ checkReminders varAlertMap = withRemindersFile $ \file -> do
     -- Add the alert to the map.
     modifyIORef' varAlertMap (M.insert uuid alert)
     -- Show the alert.
-    widgetShow (alert ^. window)
+    widgetShowAll (alert ^. window)
   -- Finally, lastSeen of all snown reminders must be updated.
   let expired' = M.fromList expired & each . lastSeen .~ currentTime
   return $ file & remindersOn %~ M.union expired'
@@ -283,7 +284,6 @@ makeAlertWindow startingText startEditable caption onEdit onCommit = do
   windowSetGravity  dialog GravityCenter
   windowSetPosition dialog WinPosCenterAlways
 
-  widgetShowAll dialog
   return dialog
 
 createAlert :: UUID -> Reminder -> IORef AlertState -> IO Alert
