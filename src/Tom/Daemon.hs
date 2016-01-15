@@ -280,6 +280,9 @@ makeAlertWindow startingText startEditable caption onEdit onCommit = do
     [] <- eventModifier  -- so that Shift+Enter would work
     liftIO $ textToLabel
 
+  windowSetGravity  dialog GravityCenter
+  windowSetPosition dialog WinPosCenterAlways
+
   widgetShowAll dialog
   return dialog
 
