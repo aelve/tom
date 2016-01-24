@@ -19,8 +19,6 @@ import qualified Data.Text as T
 import Text.Megaparsec
 -- Time
 import Data.Time
--- acid-state
-import Data.Acid
 -- Tom-specific
 import Tom.When
 import Tom.Reminders
@@ -46,21 +44,18 @@ scheduleReminder scheduleStr msg = do
   _schedule <- case parse scheduleP "" scheduleStr of
     Left err -> error (show err)
     Right x  -> x
-  res <- RPC.call $ RPC.AddReminder $ Reminder {
+  RPC.call' $ RPC.AddReminder $ Reminder {
     _schedule         = _schedule,
     _message          = msg,
     _created          = time,
     _lastSeen         = time,
     _lastAcknowledged = time,
     _snoozedUntil     = time }
-  case res of
-    Left err -> putStrLn $ "Error: " ++ RPC.showError err
-    Right _  -> putStrLn "Scheduled a reminder."
 
 listReminders :: String -> IO ()
-listReminders method = withDB $ \db -> do
-  rsOn  <- query db GetRemindersOn
-  rsOff <- query db GetRemindersOff
+listReminders method = do
+  rsOn  <- RPC.call' RPC.GetRemindersOn
+  rsOff <- RPC.call' RPC.GetRemindersOff
   let sorted = case method of
         "ack"     -> sortWith (view lastAcknowledged)
         "seen"    -> sortWith (view lastSeen)

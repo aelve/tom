@@ -139,6 +139,10 @@ runDaemon = withDB $ \db -> do
     RPC.DisableReminder uuid -> do
       update db (DisableReminder uuid)
       return (Right ())
+    RPC.GetRemindersOn ->
+      Right <$> query db GetRemindersOn
+    RPC.GetRemindersOff ->
+      Right <$> query db GetRemindersOff
   varAlerts <- newIORef M.empty
   initGUI
   -- Repeat every 1s.

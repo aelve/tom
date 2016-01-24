@@ -10,7 +10,7 @@ NoImplicitPrelude
 
 module Tom.RPC
 (
-  call,
+  call, call',
   Method(..),
   RPCError(..),
   showError,
@@ -24,6 +24,8 @@ where
 import BasePrelude hiding (yield)
 -- Bytestring
 import qualified Data.ByteString.Lazy as BSL
+-- Containers
+import Data.Map (Map)
 -- UUID
 import Data.UUID
 -- Conduit
@@ -49,6 +51,8 @@ data Method a where
   AddReminder :: Reminder -> Method ()
   EnableReminder :: UUID -> Method ()
   DisableReminder :: UUID -> Method ()
+  GetRemindersOn :: Method (Map UUID Reminder)
+  GetRemindersOff :: Method (Map UUID Reminder)
 
 data SomeMethod = forall a. Binary a => SomeMethod (Method a)
 
@@ -57,12 +61,16 @@ instance Binary SomeMethod where
     SomeMethod (AddReminder x)     -> put (0 :: Int) >> put x
     SomeMethod (EnableReminder x)  -> put (1 :: Int) >> put x
     SomeMethod (DisableReminder x) -> put (2 :: Int) >> put x
+    SomeMethod GetRemindersOn      -> put (3 :: Int)
+    SomeMethod GetRemindersOff     -> put (4 :: Int)
   get = do
     t :: Int <- get
     case t of
       0 -> SomeMethod . AddReminder     <$> get
       1 -> SomeMethod . EnableReminder  <$> get
       2 -> SomeMethod . DisableReminder <$> get
+      3 -> pure (SomeMethod GetRemindersOn)
+      4 -> pure (SomeMethod GetRemindersOff)
       n -> error $ "SomeMethod: unknown tag value: " ++ show n
 
 type MethodHandler = forall a. Binary a => Method a -> IO (Either String a)
@@ -95,3 +103,10 @@ call x = do
       | otherwise             -> ioError e
     Right res                 -> return res  -- can still be Left
                                              -- (for instance, Left NoResponse)
+
+call' :: Binary a => Method a -> IO a
+call' x = do
+  mbRes <- call x
+  case mbRes of
+    Left e -> error (showError e)
+    Right res -> return res
