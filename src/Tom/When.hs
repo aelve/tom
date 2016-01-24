@@ -1,8 +1,10 @@
 {-# LANGUAGE
 RecordWildCards,
 DeriveGeneric,
+DeriveAnyClass,
 TupleSections,
 FlexibleContexts,
+TemplateHaskell,
 NoImplicitPrelude
   #-}
 
@@ -27,13 +29,16 @@ import qualified Text.ParserCombinators.ReadP as R
 import Text.Megaparsec
 import Text.Megaparsec.Text
 import Text.Megaparsec.Lexer
--- Strictness
-import Control.DeepSeq
 -- Time
 import Data.Time
 import Data.Time.Clock.TAI
 import Data.Time.Calendar.MonthDay
 import Data.Time.Zones                         -- tz
+-- acid-state & safecopy
+import Data.SafeCopy
+-- Binary
+import Data.Binary
+import Data.Binary.Orphans ()                  -- binary-orphans
 -- Tom-specific
 import Tom.Utils
 
@@ -51,7 +56,14 @@ data When
       timezone :: Maybe String }  -- ^ 'Nothing' = always use local timezone.
   | Moment {
       moment   :: AbsoluteTime }
-  deriving (Eq, Generic)
+  deriving (Eq, Generic, Binary)
+
+-- TODO: use instance from binary-orphans when it's there
+instance Binary AbsoluteTime where
+  get = flip addAbsoluteTime taiEpoch <$> get
+  put = put . flip diffAbsoluteTime taiEpoch
+
+deriveSafeCopy 0 'base ''When
 
 -- Examples of format used by Read and Show instances of Mask:
 -- 
@@ -111,8 +123,6 @@ instance Read When where
         skipSome (R.lift (R.satisfy isSpace))
         moment <- readAbsoluteTime
         return Moment{..}
-
-instance NFData When
 
 -- | A parser for time specifiers ('When'). IO may be needed to query
 -- timezones, for instance.

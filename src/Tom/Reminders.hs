@@ -1,7 +1,9 @@
 {-# LANGUAGE
+TypeFamilies,
 RecordWildCards,
 ViewPatterns,
 DeriveGeneric,
+DeriveAnyClass,
 OverloadedStrings,
 TemplateHaskell,
 RankNTypes,
@@ -11,6 +13,18 @@ NoImplicitPrelude
 
 module Tom.Reminders
 (
+  Acid,
+  withDB,
+  AddReminder(..),
+  EnableReminder(..),
+  DisableReminder(..),
+  SetMessage(..),
+  SetLastSeen(..),
+  SetLastAcknowledged(..),
+  SetSnoozedUntil(..),
+  GetRemindersOn(..),
+  GetRemindersOff(..),
+  GetReminder(..),
   Reminder(..),
     schedule,
     message,
@@ -22,12 +36,6 @@ module Tom.Reminders
     remindersOn,
     remindersOff,
     reminderByUUID,
-  readRemindersFile,
-  withRemindersFile,
-  enableReminder,
-  disableReminder,
-  addReminder,
-  modifyReminder,
   isReminderInInterval,
 )
 where
@@ -35,35 +43,32 @@ where
 
 -- General
 import BasePrelude hiding (second)
+-- Monads and monad transformers
+import Control.Monad.State
 -- Lenses
-import           Lens.Micro.Platform hiding ((.=), (&))
+import Lens.Micro.Platform hiding ((&))
 -- Text
 import Data.Text (Text)
 -- Files
-import           System.Directory                   -- directory
-import           System.FilePath                    -- filepath
--- File locking
-import           System.FileLock                    -- filelock
--- ByteString
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
+import System.Directory                   -- directory
+import System.FilePath
 -- Map
-import qualified Data.Map as M
-import           Data.Map (Map)
+import Data.Map (Map)
 -- Time
-import           Data.Time
-import           Data.Time.Calendar.OrdinalDate
-import           Data.Time.Zones                    -- tz
+import Data.Time
+import Data.Time.Calendar.OrdinalDate
+import Data.Time.Zones                    -- tz
 -- UUIDs
-import           Data.UUID hiding (null)            -- uuid
--- JSON
-import           Data.Aeson as Aeson                -- aeson
-import qualified Data.Aeson.Encode.Pretty as Aeson  -- aeson-pretty
--- Randomness
-import           System.Random
+import Data.UUID hiding (null)            -- uuid
+-- acid-state & safecopy
+import Data.Acid as Acid
+import Data.SafeCopy
+-- Binary
+import Data.Binary (Binary)
+import Data.Binary.Orphans ()             -- binary-orphans
 -- Tom-specific
-import           Tom.When
-import           Tom.Utils
+import Tom.When
+import Tom.Utils
 
 
 -- | A single reminder.
@@ -84,28 +89,11 @@ data Reminder
       _lastAcknowledged :: UTCTime,
       -- | When to start showing the reminder (used for snoozing)
       _snoozedUntil     :: UTCTime }
-  deriving (Eq, Read, Show)
+  deriving (Eq, Read, Show, Generic, Binary)
+
+deriveSafeCopy 0 'base ''Reminder
 
 makeLenses ''Reminder
-
-instance FromJSON Reminder where
-  parseJSON = withObject "reminder" $ \o -> do
-    _schedule         <- read <$> o .: "schedule"
-    _message          <- o .: "message"
-    _created          <- o .: "created"
-    _lastSeen         <- o .: "seen"
-    _lastAcknowledged <- o .: "acknowledged"
-    _snoozedUntil     <- o .: "snoozed-until"
-    return Reminder{..}
-
-instance ToJSON Reminder where
-  toJSON Reminder{..} = object [
-    "schedule"      .= show _schedule,
-    "message"       .= _message,
-    "created"       .= _created,
-    "seen"          .= _lastSeen,
-    "acknowledged"  .= _lastAcknowledged,
-    "snoozed-until" .= _snoozedUntil ]
 
 data RemindersFile = RemindersFile {
   _remindersOn  :: Map UUID Reminder,
@@ -118,21 +106,68 @@ makeLenses ''RemindersFile
 reminderByUUID :: UUID -> Traversal' RemindersFile Reminder
 reminderByUUID uuid = failing (remindersOn . ix uuid) (remindersOff . ix uuid)
 
+addReminder :: UUID -> Reminder -> Acid.Update RemindersFile ()
+addReminder uuid reminder = do
+  remindersOn . at uuid .= Just reminder
+
+enableReminder :: UUID -> Acid.Update RemindersFile ()
+enableReminder uuid = do
+  file <- get
+  case file ^. remindersOff . at uuid of
+    Nothing ->
+      return ()
+    Just reminder -> do
+      remindersOn  . at uuid .= Just reminder
+      remindersOff . at uuid .= Nothing
+
+disableReminder :: UUID -> Acid.Update RemindersFile ()
+disableReminder uuid = do
+  file <- get
+  case file ^. remindersOn . at uuid of
+    Nothing ->
+      return ()
+    Just reminder -> do
+      remindersOff . at uuid .= Just reminder
+      remindersOn  . at uuid .= Nothing
+
+setMessage :: UUID -> Text -> Acid.Update RemindersFile ()
+setMessage uuid x = do
+  reminderByUUID uuid . message .= x
+
+setLastSeen :: UUID -> UTCTime -> Acid.Update RemindersFile ()
+setLastSeen uuid x = do
+  reminderByUUID uuid . lastSeen .= x
+
+setLastAcknowledged :: UUID -> UTCTime -> Acid.Update RemindersFile ()
+setLastAcknowledged uuid x = do
+  reminderByUUID uuid . lastAcknowledged .= x
+
+setSnoozedUntil :: UUID -> UTCTime -> Acid.Update RemindersFile ()
+setSnoozedUntil uuid x = do
+  reminderByUUID uuid . snoozedUntil .= x
+
+getRemindersOn :: Acid.Query RemindersFile (Map UUID Reminder)
+getRemindersOn = view remindersOn
+
+getRemindersOff :: Acid.Query RemindersFile (Map UUID Reminder)
+getRemindersOff = view remindersOff
+
+getReminder :: UUID -> Acid.Query RemindersFile (Maybe Reminder)
+getReminder uuid = preview (reminderByUUID uuid)
+
+deriveSafeCopy 0 'base ''RemindersFile
+
+makeAcidic ''RemindersFile [
+  'addReminder,
+  'enableReminder, 'disableReminder,
+  'setMessage, 'setLastSeen, 'setLastAcknowledged, 'setSnoozedUntil,
+  'getRemindersOn, 'getRemindersOff,
+  'getReminder ]
+
 nullRemindersFile :: RemindersFile
 nullRemindersFile = RemindersFile {
   _remindersOn  = mempty,
   _remindersOff = mempty }
-
-instance FromJSON RemindersFile where
-  parseJSON = withObject "reminders file" $ \o -> do
-    _remindersOn  <- M.mapKeys read <$> o .: "on"
-    _remindersOff <- M.mapKeys read <$> o .: "off"
-    return RemindersFile{..}
-
-instance ToJSON RemindersFile where
-  toJSON RemindersFile{..} = object [
-    "on"  .= M.mapKeys show _remindersOn,
-    "off" .= M.mapKeys show _remindersOff ]
 
 -- | Get the directory where the settings and the reminders file and
 -- everything is.
@@ -144,81 +179,14 @@ getDataDirectory = do
     createDirectory dir
   return dir
 
--- | Just read the reminders file, without setting up any locks and so on.
---
--- This function, however, does implement caching – if the reminders file
--- hasn't changed, it will be simply taken from the cache instead of being
--- reread and reparsed.
---
--- This function doesn't assume that the file exists, and will recreate it if
--- it doesn't.
-readRemindersFileWithoutLocking :: IO RemindersFile
-readRemindersFileWithoutLocking = do
+type Acid = AcidState RemindersFile
+
+withDB :: (Acid -> IO a) -> IO a
+withDB act = do
   dir <- getDataDirectory
-  let filename = dir </> "reminders"
-  exists <- doesFileExist filename
-  when (not exists) $
-    BSL.writeFile filename (Aeson.encodePretty nullRemindersFile)
-  fileChanged <- getModificationTime filename
-  cache <- readIORef cacheRef
-  case cache of
-    Just (cacheCreated, file) | cacheCreated > fileChanged ->
-      return file
-    _other -> do
-      contents <- BSL.fromStrict <$> BS.readFile filename
-      let err  = error "Can't parse reminders."
-          file = fromMaybe err (Aeson.decode' contents)
-      writeIORef cacheRef (Just (fileChanged, file))
-      return file
-  where
-    cacheRef :: IORef (Maybe (UTCTime, RemindersFile))
-    cacheRef = unsafePerformIO $ newIORef Nothing
-
-readRemindersFile :: IO RemindersFile
-readRemindersFile = do
-  dir <- getDataDirectory
-  withFileLock (dir </> "lock") Exclusive $ \_ -> do
-    readRemindersFileWithoutLocking
-
-enableReminder :: UUID -> IO ()
-enableReminder uuid = withRemindersFile $ \file ->
-  return $ case file ^. remindersOff . at uuid of
-    Nothing -> file
-    Just reminder -> file & remindersOn  . at uuid .~ Just reminder
-                          & remindersOff . at uuid .~ Nothing
-
-disableReminder :: UUID -> IO ()
-disableReminder uuid = withRemindersFile $ \file ->
-  return $ case file ^. remindersOn . at uuid of
-    Nothing -> file
-    Just reminder -> file & remindersOn  . at uuid .~ Nothing
-                          & remindersOff . at uuid .~ Just reminder
-
-modifyReminder :: UUID -> (Reminder -> Reminder) -> IO ()
-modifyReminder uuid f = withRemindersFile $ \file ->
-  return $ file & reminderByUUID uuid %~ f
-
--- | Add a (turned on) reminder. The UUID will be generated automatically.
-addReminder :: Reminder -> IO ()
-addReminder reminder = withRemindersFile $ \file -> do
-  uuid <- randomIO
-  return $ file & remindersOn . at uuid .~ Just reminder
-
-withRemindersFile :: (RemindersFile -> IO RemindersFile) -> IO ()
-withRemindersFile func = do
-  dir <- getDataDirectory
-  withFileLock (dir </> "lock") Exclusive $ \_ -> do
-    file <- readRemindersFileWithoutLocking
-    -- Just writing encoded data to the file isn't safe, because if something
-    -- happens while we're writing (such as power outage), we risk losing all
-    -- reminders. So, instead we're going to write into a *different* file,
-    -- and then atomically (or so documentation for 'renameFile' claims)
-    -- rename the new one into the old one. Note: we can't create this file
-    -- in a temporary directory, because it might not be on the same device,
-    -- which would cause renameFile to fail.
-    let newFile = dir </> "reminders-new"
-    BSL.writeFile newFile . Aeson.encodePretty =<< func file
-    renameFile newFile (dir </> "reminders")
+  bracket (openLocalStateFrom (dir </> "state/") nullRemindersFile)
+          closeAcidState
+          act
 
 -- | Check whether there's -a moment of time which matches the schedule- in
 -- a time interval.

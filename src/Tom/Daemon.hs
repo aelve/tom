@@ -1,4 +1,5 @@
 {-# LANGUAGE
+GADTs,
 RecordWildCards,
 TemplateHaskell,
 OverloadedStrings,
@@ -34,9 +35,14 @@ import Data.UUID hiding (null)
 import Data.Time
 -- IO
 import Control.Monad.IO.Class
+-- acid-state
+import Data.Acid
+-- Randomness
+import System.Random
 -- Tom-specific
 import Tom.Reminders
 import Tom.When
+import qualified Tom.RPC as RPC
 
 
 data TimeUnit = Minute | Hour
@@ -110,27 +116,45 @@ makeLenses ''Alert
 {-
 How does all this work:
 
-* There are reminders (in the file).
+* There are reminders.
 
 * For some reminders there are alerts shown (i.e. they already are on the screen). Each alert has a window and some internal state (for instance, button labels) – see 'AlertState'. The user can modify the internal state from the window (e.g. right-click the buttons to make counts on them increase).
 
 * When it's time to show an alert for a reminder, we use 'createAlert'. It's possible that the alert window is already there and just got ignored or hidden by other windows or whatever and we simply need to bring it to front so that the user would see it again; however, we can't do that easily (there's e.g. 'windowPresent', but at least in Gnome instead of -moving the window to the current workspace- it changes the current workspace, and that's annoying), so we have to recreate the window (using the state of the previous window).
 -}
 runDaemon :: IO ()
-runDaemon = do
+runDaemon = withDB $ \db -> do
+  -- The server has to be on a bound thread because otherwise it receives
+  -- like 1 packet per second (no idea why) – hence forkOS is used instead of
+  -- forkIO.
+  forkOS $ RPC.serve $ \m -> case m of
+    RPC.AddReminder r -> do
+      uuid <- randomIO
+      update db (AddReminder uuid r)
+      return (Right ())
+    RPC.EnableReminder uuid -> do
+      -- TODO: perhaps should complain if the reminder doesn't even exist
+      update db (EnableReminder uuid)
+      return (Right ())
+    RPC.DisableReminder uuid -> do
+      update db (DisableReminder uuid)
+      return (Right ())
   varAlerts <- newIORef M.empty
   initGUI
   -- Repeat every 1s.
-  timeoutAdd (checkReminders varAlerts >> return True) 1000
+  timeoutAdd (checkReminders db varAlerts >> return True) 1000
   mainGUI
 
 -- | Find all expired reminders, update them, show alerts for them.
-checkReminders :: IORef (Map UUID Alert) -> IO ()
-checkReminders varAlertMap = withRemindersFile $ \file -> do
+checkReminders :: Acid -> IORef (Map UUID Alert) -> IO ()
+checkReminders db varAlertMap = do
   currentTime <- getCurrentTime
   -- We find all expired reminders (and their UUIDs).
-  expired <- filterM (isExpired currentTime . snd) (M.assocs (file ^. remindersOn))
+  enabled <- query db GetRemindersOn
+  expired <- filterM (isExpired currentTime . snd) (M.assocs enabled)
   for_ expired $ \(uuid, reminder) -> do
+    -- Mark the reminder as seen.
+    update db (SetLastSeen uuid currentTime)
     -- If the old alert is still hanging around, destroy it (and it'll be
     -- automatically removed from varAlertMap because of the “after
     -- objectDestroy” handler we add a bit later (just read on)).
@@ -143,7 +167,7 @@ checkReminders varAlertMap = withRemindersFile $ \file -> do
       Just alert -> alert ^. getState
       Nothing    -> return defaultAlertState
     varState <- newIORef newState
-    alert <- createAlert uuid reminder varState
+    alert <- createAlert db uuid reminder varState
     -- Add a handler: when the alert window is closed, it'll be removed from
     -- the map.
     (alert ^. window) `after` objectDestroy $
@@ -152,9 +176,6 @@ checkReminders varAlertMap = withRemindersFile $ \file -> do
     modifyIORef' varAlertMap (M.insert uuid alert)
     -- Show the alert.
     widgetShowAll (alert ^. window)
-  -- Finally, lastSeen of all snown reminders must be updated.
-  let expired' = M.fromList expired & each . lastSeen .~ currentTime
-  return $ file & remindersOn %~ M.union expired'
 
 {- |
 We want the following behavior:
@@ -286,12 +307,12 @@ makeAlertWindow startingText startEditable caption onEdit onCommit = do
 
   return dialog
 
-createAlert :: UUID -> Reminder -> IORef AlertState -> IO Alert
-createAlert uuid reminder varState = do
+createAlert :: Acid -> UUID -> Reminder -> IORef AlertState -> IO Alert
+createAlert db uuid reminder varState = do
   let onEdit s = do
         modifyIORef varState $ edited .~ Just s
   let onCommit s = do
-        modifyReminder uuid $ message .~ s
+        update db (SetMessage uuid s)
         modifyIORef varState $ edited .~ Nothing
   (dialogMessage, startEditable) <- do
     mbE <- view edited <$> readIORef varState
@@ -311,7 +332,7 @@ createAlert uuid reminder varState = do
   buttonYes <- dialogAddButton alertWindow ("Thanks!"     :: Text) ResponseYes
   -- Assign actions to buttons.
   alertWindow `on` response $ \responseId ->
-    responseHandler uuid varState alertWindow responseId
+    responseHandler db uuid varState alertWindow responseId
   -- Add a handler: when the alert is shown, block the buttons and create a
   -- timer that would unblock them in 1s (to prevent accidental clicks when
   -- the user is doing something and the alert appears suddenly).
@@ -360,27 +381,25 @@ addSnoozeButtons varState alertWindow = do
     return buttonWidget
 
 responseHandler
-  :: UUID -> IORef AlertState -> AlertWindow -> ResponseId -> IO ()
-responseHandler uuid varState alertWindow responseId = do
+  :: Acid -> UUID -> IORef AlertState -> AlertWindow -> ResponseId -> IO ()
+responseHandler db uuid varState alertWindow responseId = do
   currentTime <- getCurrentTime
-  modifyReminder uuid $ lastSeen .~ currentTime
+  update db (SetLastSeen uuid currentTime)
   case responseId of
     ResponseNo ->
-      disableReminder uuid
+      update db (DisableReminder uuid)
     ResponseYes -> do
-      modifyReminder uuid $
-        lastAcknowledged .~ currentTime
+      update db (SetLastAcknowledged uuid currentTime)
       -- If the reminder was a “Moment”, we can turn it off because it'll
       -- never fire again.
-      do file <- readRemindersFile
-         case file ^? reminderByUUID uuid . schedule of
-           Just Moment{} -> disableReminder uuid
-           _other        -> return ()
+      mbReminder <- query db (GetReminder uuid)
+      case mbReminder ^? _Just . schedule of
+        Just Moment{} -> update db (DisableReminder uuid)
+        _other        -> return ()
     ResponseUser buttonIndex -> do
       alertState <- readIORef varState
       let buttonState = alertState ^?! buttons . ix buttonIndex
-      modifyReminder uuid $
-        snoozedUntil .~ applyButton buttonState currentTime
+      update db (SetSnoozedUntil uuid (applyButton buttonState currentTime))
     _other -> return ()
   widgetDestroy alertWindow
 

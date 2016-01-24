@@ -26,6 +26,7 @@ import Text.Megaparsec
 -- Tom-specific
 import Tom.When
 import Tom.Reminders
+import qualified Tom.RPC as RPC
 
 
 -- todo: gray placeholders like “reminder text” and “when should it run”
@@ -130,14 +131,25 @@ runGUI = do
           buffer <- get reminderEntry textViewBuffer
           get buffer textBufferText
         time <- getCurrentTime
-        addReminder $ Reminder {
+        res <- RPC.call $ RPC.AddReminder $ Reminder {
           _schedule         = _schedule,
           _message          = _message,
           _created          = time,
           _lastSeen         = time,
           _lastAcknowledged = time,
           _snoozedUntil     = time }
-        widgetDestroy window
+        case res of
+          Right _ -> widgetDestroy window
+          Left err -> do
+            d <- messageDialogNew
+              (Just window)
+              [DialogModal]
+              MessageError
+              ButtonsOk
+              ("Error: " ++ RPC.showError err)
+            dialogRun d
+            widgetDestroy d
+            return ()
   -- Show the window and start GTK event loop.
   widgetShowAll window
   mainGUI

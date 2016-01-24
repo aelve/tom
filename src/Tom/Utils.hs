@@ -1,8 +1,12 @@
 {-# LANGUAGE
 ViewPatterns,
 FlexibleContexts,
+TemplateHaskell,
 NoImplicitPrelude
   #-}
+
+
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 
 module Tom.Utils
@@ -17,6 +21,8 @@ module Tom.Utils
   getAbsoluteTime,
   utcToAbsoluteTime,
   absoluteTimeToUTC,
+  -- * Extra instances
+  -- ** SafeCopy for UUID
 )
 where
 
@@ -30,6 +36,10 @@ import Data.Time
 import Data.Time.Zones
 import Data.Time.Clock.TAI
 import Data.Time.Clock.AnnouncedLeapSeconds    -- leapseconds-announced
+-- acid-state & safecopy
+import Data.SafeCopy
+-- UUID
+import Data.UUID
 
 
 -- | Return Olson timezone name corresponding to an abbreviation.
@@ -118,3 +128,5 @@ utcToAbsoluteTime = utcToTAITime lst
 
 absoluteTimeToUTC :: AbsoluteTime -> UTCTime
 absoluteTimeToUTC = taiToUTCTime lst
+
+deriveSafeCopy 0 'base ''UUID
