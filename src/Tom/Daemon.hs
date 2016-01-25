@@ -36,7 +36,7 @@ import Data.Time
 -- IO
 import Control.Monad.IO.Class
 -- acid-state
-import Data.Acid
+import Data.Acid as Acid
 -- Randomness
 import System.Random
 -- Tom-specific
@@ -124,6 +124,7 @@ How does all this work:
 -}
 runDaemon :: IO ()
 runDaemon = withDB $ \db -> do
+  Acid.createCheckpoint db
   -- The server has to be on a bound thread because otherwise it receives
   -- like 1 packet per second (no idea why) – hence forkOS is used instead of
   -- forkIO.
