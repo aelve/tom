@@ -58,11 +58,6 @@ data When
       moment   :: AbsoluteTime }
   deriving (Eq, Generic, Binary)
 
--- TODO: use instance from binary-orphans when it's there
-instance Binary AbsoluteTime where
-  get = flip addAbsoluteTime taiEpoch <$> get
-  put = put . flip diffAbsoluteTime taiEpoch
-
 deriveSafeCopy 0 'base ''When
 
 -- Examples of format used by Read and Show instances of Mask:
