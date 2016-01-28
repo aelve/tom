@@ -36,9 +36,61 @@ runGUI :: IO ()
 runGUI = do
   -- Initialise GTK.
   initGUI
+  -- Create our GUI.
+  (window, scheduleEntry, scheduleInfo, reminderEntry) <- createGUI
+  -- Close the program when the window is closed.
+  window `on` objectDestroy $ mainQuit
+  -- When Enter is pressed in the schedule entry box, move focus to the
+  -- reminder entry box.
+  scheduleEntry `on` entryActivated $
+    widgetGrabFocus reminderEntry
+  --
+  scheduleEntry `on` editableChanged $ do
+    t <- get scheduleEntry entryText
+    if T.null t
+      then set scheduleInfo [labelText := "enter the schedule"]
+      else case parseSchedule t of
+             Left err -> set scheduleInfo [labelText := err]
+             Right _  -> set scheduleInfo [labelText := "schedule is valid"]
+  -- When Enter is pressed in the reminder entry box, schedule the reminder.
+  reminderEntry `on` keyPressEvent $ tryEvent $ do
+    "Return" <- T.unpack <$> eventKeyName
+    [] <- eventModifier  -- so that Shift+Enter would work
+    scheduleText <- liftIO $ get scheduleEntry entryText
+    case parseSchedule scheduleText of
+      Left _ -> return ()
+      Right getSchedule -> liftIO $ do
+        _schedule <- getSchedule
+        _message <- do
+          buffer <- get reminderEntry textViewBuffer
+          get buffer textBufferText
+        time <- getCurrentTime
+        res <- RPC.call $ RPC.AddReminder $ Reminder {
+          _schedule         = _schedule,
+          _message          = _message,
+          _created          = time,
+          _lastSeen         = time,
+          _lastAcknowledged = time,
+          _snoozedUntil     = time }
+        case res of
+          Right _ -> widgetDestroy window
+          Left err -> do
+            d <- messageDialogNew
+              (Just window)
+              [DialogModal]
+              MessageError
+              ButtonsOk
+              ("Error: " ++ RPC.showError err)
+            dialogRun d
+            widgetDestroy d
+  -- Show the window and start GTK event loop.
+  widgetShowAll window
+  mainGUI
+
+createGUI :: IO (Window, Entry, Label, TextView)
+createGUI = do
   -- Create main window.
   window <- windowNew
-  window `on` objectDestroy $ mainQuit
   -- Set window's attributes:
   --   * amount of space around widgets contained in the window = 10
   --   * window must be centered
@@ -106,53 +158,7 @@ runGUI = do
   set layout [
     tableChildYOptions scheduleEntry := [Fill],
     tableChildYOptions scheduleInfo := [Fill] ]
-  -- When Enter is pressed in the schedule entry box, move focus to the
-  -- reminder entry box.
-  scheduleEntry `on` entryActivated $
-    widgetGrabFocus reminderEntry
-  --
-  scheduleEntry `on` editableChanged $ do
-    t <- get scheduleEntry entryText
-    if T.null t
-      then set scheduleInfo [labelText := "enter the schedule"]
-      else case parseSchedule t of
-             Left err -> set scheduleInfo [labelText := err]
-             Right _  -> set scheduleInfo [labelText := "schedule is valid"]
-  -- When Enter is pressed in the reminder entry box, schedule the reminder.
-  reminderEntry `on` keyPressEvent $ tryEvent $ do
-    "Return" <- T.unpack <$> eventKeyName
-    [] <- eventModifier  -- so that Shift+Enter would work
-    scheduleText <- liftIO $ get scheduleEntry entryText
-    case parseSchedule scheduleText of
-      Left _ -> return ()
-      Right getSchedule -> liftIO $ do
-        _schedule <- getSchedule
-        _message <- do
-          buffer <- get reminderEntry textViewBuffer
-          get buffer textBufferText
-        time <- getCurrentTime
-        res <- RPC.call $ RPC.AddReminder $ Reminder {
-          _schedule         = _schedule,
-          _message          = _message,
-          _created          = time,
-          _lastSeen         = time,
-          _lastAcknowledged = time,
-          _snoozedUntil     = time }
-        case res of
-          Right _ -> widgetDestroy window
-          Left err -> do
-            d <- messageDialogNew
-              (Just window)
-              [DialogModal]
-              MessageError
-              ButtonsOk
-              ("Error: " ++ RPC.showError err)
-            dialogRun d
-            widgetDestroy d
-            return ()
-  -- Show the window and start GTK event loop.
-  widgetShowAll window
-  mainGUI
+  return (window, scheduleEntry, scheduleInfo, reminderEntry)
 
 parseSchedule :: Text -> Either String (IO When)
 parseSchedule s = either (Left . show) Right $ parse scheduleP "" s
