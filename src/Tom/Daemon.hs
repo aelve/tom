@@ -13,6 +13,7 @@ NoImplicitPrelude
 module Tom.Daemon
 (
   runDaemon,
+  testAlertWindow,
 )
 where
 
@@ -42,6 +43,7 @@ import System.Random
 -- Tom-specific
 import Tom.Reminders
 import Tom.When
+import Tom.Utils
 import qualified Tom.RPC as RPC
 
 
@@ -446,3 +448,11 @@ isLink s = and [
   T.any (== '.') s,
   or $ do ('.', c) <- T.zip s (T.tail s)
           return (not (isSpace c) && c /= '.') ]
+
+testAlertWindow :: IO ()
+testAlertWindow = testGUI $ do
+  dialog <- makeAlertWindow "hello" False "caption"
+              (\_ -> return ())
+              (\_ -> return ())
+  dialogAddButton dialog ("Hi!" :: Text) ResponseNone
+  return dialog

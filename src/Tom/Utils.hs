@@ -21,6 +21,8 @@ module Tom.Utils
   getAbsoluteTime,
   utcToAbsoluteTime,
   absoluteTimeToUTC,
+  -- * GUI
+  testGUI,
   -- * Extra instances
   -- ** SafeCopy for UUID
 )
@@ -28,7 +30,7 @@ where
 
 
 -- General
-import BasePrelude hiding (second)
+import BasePrelude hiding (second, on)
 -- Monad transformers
 import Control.Monad.Writer
 -- Time
@@ -38,6 +40,8 @@ import Data.Time.Clock.TAI
 import Data.Time.Clock.AnnouncedLeapSeconds    -- leapseconds-announced
 -- acid-state & safecopy
 import Data.SafeCopy
+-- GTK
+import Graphics.UI.Gtk
 -- UUID
 import Data.UUID
 
@@ -130,3 +134,11 @@ absoluteTimeToUTC :: AbsoluteTime -> UTCTime
 absoluteTimeToUTC = taiToUTCTime lst
 
 deriveSafeCopy 0 'base ''UUID
+
+testGUI :: WidgetClass a => IO a -> IO ()
+testGUI mkWindow = do
+  initGUI
+  window <- mkWindow
+  widgetShowAll window
+  window `on` objectDestroy $ mainQuit
+  mainGUI

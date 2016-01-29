@@ -6,12 +6,15 @@ NoImplicitPrelude
 module Tom.GUI
 (
   runGUI,
+  testMainWindow,
 )
 where
 
 
 -- General
 import BasePrelude hiding (on, try)
+-- Lenses
+import Lens.Micro.Platform hiding ((&), set)
 -- GTK
 import Graphics.UI.Gtk
 -- Text
@@ -26,6 +29,7 @@ import Text.Megaparsec
 -- Tom-specific
 import Tom.When
 import Tom.Reminders
+import Tom.Utils
 import qualified Tom.RPC as RPC
 
 
@@ -165,3 +169,5 @@ parseSchedule s = either (Left . show) Right $ parse scheduleP "" s
   where
     scheduleP = choice $ map (\p -> try (p <* eof)) allWhenParsers
 
+testMainWindow :: IO ()
+testMainWindow = testGUI (view _1 <$> createGUI)
