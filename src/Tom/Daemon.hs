@@ -6,6 +6,7 @@ OverloadedStrings,
 ViewPatterns,
 MultiWayIf,
 ScopedTypeVariables,
+RecursiveDo,
 NoImplicitPrelude
   #-}
 
@@ -213,10 +214,11 @@ makeAlertWindow
   :: Text                -- ^ Starting text
   -> Bool                -- ^ False = start as label, True = start as editbox
   -> Text                -- ^ Caption
+  -> Bool                -- ^ Whether text should be hidden at first
   -> (Text -> IO ())     -- ^ On edit
   -> (Text -> IO ())     -- ^ On finishing edit
   -> IO Dialog
-makeAlertWindow startingText startEditable caption onEdit onCommit = do
+makeAlertWindow startingText startEditable caption isSecret onEdit onCommit = do
   dialog <- dialogNew
   set dialog [
     windowResizable := False ]
@@ -246,8 +248,6 @@ makeAlertWindow startingText startEditable caption onEdit onCommit = do
   textFrame <- frameNew
   textFrame `containerAdd` text
   buffer <- get text textViewBuffer
-  -- This is done so that onEdit wouldn't be called when ‘text’ is first
-  -- populated with startingText.
   set buffer [
     textBufferText := startingText ]
   set text [
@@ -260,6 +260,27 @@ makeAlertWindow startingText startEditable caption onEdit onCommit = do
     widgetMarginTop    := 20,
     widgetMarginBottom := 20,
     frameShadowType    := ShadowEtchedIn ]
+
+  when isSecret $ void $ do
+    -- TODO: would be nice to set hand-like cursor for “reveal”
+    set label [
+      labelText := ("&lt;reveal&gt;" :: Text),
+      labelUseMarkup := True,
+      labelSelectable := False ]
+    -- “rec” comes from RecursiveDo; this is needed because we're using
+    -- signalId in the signal handler (to disconnect the signal)
+    rec signalId <- labelBox `on` buttonPressEvent $ tryEvent $ do
+          SingleClick <- eventClick
+          LeftButton  <- eventButton
+          liftIO $ do
+            signalDisconnect signalId
+            textContents <- get buffer textBufferText
+            set label [
+              labelSelectable := True,
+              labelText       := highlightLinks textContents,
+              labelUseMarkup  := True ] -- for some reason this has
+                                        -- to be set again
+    return ()
 
   let labelToText = do
         Rectangle _ _ width _ <- widgetGetAllocation labelBox
@@ -310,7 +331,7 @@ makeAlertWindow startingText startEditable caption onEdit onCommit = do
     liftIO $ textToLabel
 
   windowSetGravity  dialog GravityCenter
-  windowSetPosition dialog WinPosCenterAlways
+  windowSetPosition dialog WinPosCenter
 
   return dialog
 
@@ -330,6 +351,7 @@ createAlert db uuid reminder varState = do
                    dialogMessage
                    startEditable
                    (T.pack (show (reminder ^. schedule)))  -- caption
+                   (reminder ^. secret)
                    onEdit
                    onCommit
   -- Add “... later” buttons from state (or default buttons).
@@ -451,7 +473,7 @@ isLink s = and [
 
 testAlertWindow :: IO ()
 testAlertWindow = testGUI $ do
-  dialog <- makeAlertWindow "hello" False "caption"
+  dialog <- makeAlertWindow "hello" False "caption" True
               (\_ -> return ())
               (\_ -> return ())
   dialogAddButton dialog ("Hi!" :: Text) ResponseNone

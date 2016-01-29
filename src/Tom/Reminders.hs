@@ -32,6 +32,7 @@ module Tom.Reminders
     lastSeen,
     lastAcknowledged,
     snoozedUntil,
+    secret,
   RemindersFile(..),
     remindersOn,
     remindersOff,
@@ -88,10 +89,32 @@ data Reminder
       -- “acknowledged” doesn't mean “done with”
       _lastAcknowledged :: UTCTime,
       -- | When to start showing the reminder (used for snoozing)
-      _snoozedUntil     :: UTCTime }
+      _snoozedUntil     :: UTCTime,
+      -- | Whether reminder text should be hidden by default
+      _secret           :: Bool }
   deriving (Eq, Read, Show, Generic, Binary)
 
-deriveSafeCopy 0 'base ''Reminder
+data Reminder_v0 = Reminder_v0 {
+  _schedule_v0         :: When,
+  _message_v0          :: Text,
+  _created_v0          :: UTCTime,
+  _lastSeen_v0         :: UTCTime,
+  _lastAcknowledged_v0 :: UTCTime,
+  _snoozedUntil_v0     :: UTCTime }
+
+deriveSafeCopy 0 'base ''Reminder_v0
+deriveSafeCopy 1 'extension ''Reminder
+
+instance Migrate Reminder where
+  type MigrateFrom Reminder = Reminder_v0
+  migrate Reminder_v0{..} = Reminder {
+    _schedule         = _schedule_v0,
+    _message          = _message_v0,
+    _created          = _created_v0,
+    _lastSeen         = _lastSeen_v0,
+    _lastAcknowledged = _lastAcknowledged_v0,
+    _snoozedUntil     = _snoozedUntil_v0,
+    _secret           = False }
 
 makeLenses ''Reminder
 

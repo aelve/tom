@@ -50,7 +50,8 @@ scheduleReminder scheduleStr msg = do
     _created          = time,
     _lastSeen         = time,
     _lastAcknowledged = time,
-    _snoozedUntil     = time }
+    _snoozedUntil     = time,
+    _secret           = False }
 
 listReminders :: String -> IO ()
 listReminders method = do

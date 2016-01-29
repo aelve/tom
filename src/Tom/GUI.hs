@@ -41,7 +41,8 @@ runGUI = do
   -- Initialise GTK.
   initGUI
   -- Create our GUI.
-  (window, scheduleEntry, scheduleInfo, reminderEntry) <- createGUI
+  (window, scheduleEntry, scheduleInfo, reminderEntry, secretCheckBox) <-
+    createGUI
   -- Close the program when the window is closed.
   window `on` objectDestroy $ mainQuit
   -- When Enter is pressed in the schedule entry box, move focus to the
@@ -69,13 +70,15 @@ runGUI = do
           buffer <- get reminderEntry textViewBuffer
           get buffer textBufferText
         time <- getCurrentTime
+        _secret <- get secretCheckBox toggleButtonActive
         res <- RPC.call $ RPC.AddReminder $ Reminder {
           _schedule         = _schedule,
           _message          = _message,
           _created          = time,
           _lastSeen         = time,
           _lastAcknowledged = time,
-          _snoozedUntil     = time }
+          _snoozedUntil     = time,
+          _secret           = _secret }
         case res of
           Right _ -> widgetDestroy window
           Left err -> do
@@ -91,29 +94,25 @@ runGUI = do
   widgetShowAll window
   mainGUI
 
-createGUI :: IO (Window, Entry, Label, TextView)
+createGUI :: IO (Window, Entry, Label, TextView, CheckButton)
 createGUI = do
   -- Create main window.
   window <- windowNew
   -- Set window's attributes:
   --   * amount of space around widgets contained in the window = 10
   --   * window must be centered
-  --   * window's default size = 400×200
+  --   * window's default width = 400
   set window [
     windowTitle := "Tom",
     containerBorderWidth := 10,
     windowGravity := GravityCenter,
     windowWindowPosition := WinPosCenter,
-    windowDefaultWidth := 400,
-    windowDefaultHeight := 200 ]
+    windowDefaultWidth := 400 ]
   -- Create a text box for entering schedule (“11pm” or something).
   scheduleEntry <- entryNew
-  set scheduleEntry [
-    widgetMarginBottom := 4 ]
   -- Create a label for showing information about entered schedule.
   scheduleInfo <- labelNew (Just "enter the schedule")
   set scheduleInfo [
-    widgetMarginBottom := 6,
     miscXalign := 0,
     miscXpad := 1,
     labelEllipsize := EllipsizeEnd ]
@@ -142,27 +141,32 @@ createGUI = do
   reminderEntryScrolled `containerAdd` reminderEntry
   -- Set attributes:
   --   * a nice border around reminderEntry
-  --   * minimum size = 100×40
+  --   * minimum size = 200×150
   set reminderEntryScrolled [
     scrolledWindowShadowType := ShadowEtchedIn,
-    widgetWidthRequest := 100,
-    widgetHeightRequest := 40 ]
+    widgetWidthRequest := 200,
+    widgetHeightRequest := 150 ]
+  -- Create a “secret reminder” checkbox.
+  secretCheckBox <- checkButtonNewWithLabel
+    "Secret reminder (hides reminder text until you click on it)"
   -- Create a layout (simply a table where widgets would be placed), put all
   -- other widgets there, and make the table a child of the main window.
-  layout <- tableNew 2 1 False  -- 2 rows, 1 column, autostretching = off
-  -- TODO: but shouldn't it be 3 rows?
+  layout <- tableNew 4 1 False  -- 4 rows, 1 column, autostretching = off
   tableAttachDefaults layout scheduleEntry 0 1 0 1
   tableAttachDefaults layout scheduleInfo 0 1 1 2
   tableAttachDefaults layout reminderEntryScrolled 0 1 2 3
+  tableAttachDefaults layout secretCheckBox 0 1 3 4
   window `containerAdd` layout
   -- Set layout's attributes:
-  --   * amount of space between widgets = 10
-  --   * scheduleEntry and scheduleInfo mustn't try to take more
-  --     vertical space than needed
+  --   * amount of space between widgets = 5
+  --   * only reminder entry can take vertical space when the window is
+  --     expanded
   set layout [
+    tableRowSpacing := 5,
     tableChildYOptions scheduleEntry := [Fill],
-    tableChildYOptions scheduleInfo := [Fill] ]
-  return (window, scheduleEntry, scheduleInfo, reminderEntry)
+    tableChildYOptions scheduleInfo := [Fill],
+    tableChildYOptions secretCheckBox := [Fill] ]
+  return (window, scheduleEntry, scheduleInfo, reminderEntry, secretCheckBox)
 
 parseSchedule :: Text -> Either String (IO When)
 parseSchedule s = either (Left . show) Right $ parse scheduleP "" s
