@@ -1,4 +1,6 @@
 {-# LANGUAGE
+ViewPatterns,
+OverloadedStrings,
 NoImplicitPrelude
   #-}
 
@@ -35,7 +37,9 @@ main = do
     ["--list"]         -> listReminders "created"
     ["--list", method] -> listReminders method
     ["--daemon"]       -> runDaemon
-    (sch:msg)          -> scheduleReminder (T.pack sch) (T.pack (unwords msg))
+    _                  ->
+      let (sch, T.drop 2 -> msg) = T.breakOn "::" (T.pack (unwords args))
+      in  scheduleReminder (T.strip sch) (T.strip msg)
 
 scheduleReminder :: Text -> Text -> IO ()
 scheduleReminder scheduleStr msg = do
