@@ -5,6 +5,9 @@ DeriveAnyClass,
 TupleSections,
 FlexibleContexts,
 TemplateHaskell,
+ViewPatterns,
+ScopedTypeVariables,
+TypeFamilies,
 NoImplicitPrelude
   #-}
 
@@ -15,17 +18,15 @@ module Tom.When
   allWhenParsers,
   momentP,
   wildcardP,
-  durationP,
+  durationMomentP,
+  periodicP,
 )
 where
 
 
 -- General
 import BasePrelude hiding (try, second)
--- Parsing (Read)
-import qualified Text.Read as R
-import qualified Text.ParserCombinators.ReadP as R
--- Parsing (Megaparsec); this one is used more and thus imported unqualified
+-- Parsing
 import Text.Megaparsec
 import Text.Megaparsec.Text
 import Text.Megaparsec.Lexer
@@ -56,9 +57,40 @@ data When
       timezone :: Maybe String }  -- ^ 'Nothing' = always use local timezone.
   | Moment {
       moment   :: AbsoluteTime }
+  | Periodic {
+      start    :: AbsoluteTime,   -- ^ 1st time the reminder should fire
+      period   :: DiffTime }      -- ^ Period
   deriving (Eq, Generic, Binary)
 
-deriveSafeCopy 0 'base ''When
+data When_v0
+  = Mask_v0 {
+      year_v0     :: Maybe Integer,
+      month_v0    :: Maybe Int,
+      day_v0      :: Maybe Int,
+      hour_v0     :: Maybe Int,
+      minute_v0   :: Maybe Int,
+      second_v0   :: Maybe Int,
+      weekdays_v0 :: Maybe [Int],
+      timezone_v0 :: Maybe String }
+  | Moment_v0 {
+      moment_v0   :: AbsoluteTime }
+
+deriveSafeCopy 0 'base ''When_v0
+deriveSafeCopy 1 'extension ''When
+
+instance Migrate When where
+  type MigrateFrom When = When_v0
+  migrate Mask_v0{..} = Mask {
+    year     = year_v0,
+    month    = month_v0,
+    day      = day_v0,
+    hour     = hour_v0,
+    minute   = minute_v0,
+    second   = second_v0,
+    weekdays = weekdays_v0,
+    timezone = timezone_v0 }
+  migrate Moment_v0{..} = Moment {
+    moment = moment_v0 }
 
 -- Examples of format used by Read and Show instances of Mask:
 -- 
@@ -85,39 +117,8 @@ instance Show When where
       (mb 2 hour) (mb 2 minute) (mb 2 second)
       (maybe "" (\s -> "(" ++ olsonToTZName s ++ ")") timezone)
   show Moment{..} = "moment " ++ showAbsoluteTime moment
-
-instance Read When where
-  readPrec = R.lift R.skipSpaces *> choice [readMask, readMoment]
-    where
-      -- some utils
-      r_string :: String -> ReadPrec String
-      r_string = R.lift . R.string
-      r_nonnegative :: (Integral a, Read a) => ReadPrec a
-      r_nonnegative = R.lift $ read <$> some (R.satisfy isDigit)
-      -- a parser for Mask
-      readMask = do
-        let wild p = R.lift (some (R.char 'x') *> pure Nothing) <|>
-                     (Just <$> p)
-        year  <- wild r_nonnegative <* r_string "-"
-        month <- wild r_nonnegative <* r_string "-"
-        day   <- wild r_nonnegative
-        weekdays <- optional readPrec
-        r_string ","
-        hour   <- wild r_nonnegative <* r_string "."
-        minute <- wild r_nonnegative <* r_string ":"
-        second <- wild r_nonnegative
-        let parseTZName name = case tzNameToOlson name of
-              Nothing -> fail ("unknown time zone name: '" ++ name ++ "'")
-              Just tz -> return tz
-        timezone <- R.lift . optional $
-          parseTZName =<< between (R.char '(') (R.char ')') (R.munch (/= ')'))
-        return Mask{..}
-      -- a parser for Moment
-      readMoment = do
-        r_string "moment"
-        skipSome (R.lift (R.satisfy isSpace))
-        moment <- readAbsoluteTime
-        return Moment{..}
+  show Periodic{..} = printf "every %s from %s"
+                             (showDiffTime period) (showAbsoluteTime start)
 
 -- | A parser for time specifiers ('When'). IO may be needed to query
 -- timezones, for instance.
@@ -125,7 +126,7 @@ type WhenParser = Parser (IO When)
 
 -- | All mask parsers exported by this module.
 allWhenParsers :: [WhenParser]
-allWhenParsers = [momentP, wildcardP, durationP]
+allWhenParsers = [momentP, wildcardP, durationMomentP, periodicP]
 
 -- | A parser for “am”/“pm”, returning the function to apply to hours to get
 -- the corrected version.
@@ -417,40 +418,58 @@ wildcardP = do
     timezone = mbTZ }
 
 {- |
-A parser for time durations (like “1h20m”).
+A parser for moments coming after some time (like “1h20m”).
+-}
+durationMomentP :: WhenParser
+durationMomentP = do
+  dur <- duration
+  return $ do
+    time <- getAbsoluteTime
+    return $ Moment {
+      moment = addAbsoluteTime dur time }
 
-A string it parses consists of a sequence of things, each being a number
-followed by one of:
+{- |
+A parser for periodic stuff: “every 1h20m”.
+-}
+periodicP :: WhenParser
+periodicP = do
+  string "every"
+  skipSome spaceChar
+  dur <- duration
+  return $ do
+    time <- getAbsoluteTime
+    return $ Periodic {
+      start  = addAbsoluteTime dur time,
+      period = dur }
+
+nonnegative :: Integral a => Parser a
+nonnegative = fromInteger <$> integer
+
+{- |
+'duration' parses strings consisting of things, each being a number followed by one of:
 
   * “h” (hours)
   * “m” (minutes)
   * “s” (seconds)
 -}
-durationP :: WhenParser
-durationP = do
-  let thingP :: Parser Integer
-      thingP = do
-        n <- nonnegative
-        choice [
-          string "h" *> pure (n*3600),
-          string "m" *> pure (n*60),
-          string "s" *> pure n ]
-  totalSeconds <- sum <$> some thingP
-  return $ do
-    time <- getAbsoluteTime
-    return $ Moment {
-      moment = addAbsoluteTime (secondsToDiffTime totalSeconds) time }
-
-nonnegative :: Integral a => Parser a
-nonnegative = fromInteger <$> integer
+duration :: Parser DiffTime
+duration = fmap (fromInteger . sum) $ some $ do
+  n <- nonnegative
+  choice [
+    string "h" *> pure (n*3600),
+    string "m" *> pure (n*60),
+    string "s" *> pure n ]
 
 showAbsoluteTime :: AbsoluteTime -> String
 showAbsoluteTime = ("TAI " ++) . show .
                    utcToLocalTime utc . taiToUTCTime (const 0)
 
-readAbsoluteTime :: ReadPrec AbsoluteTime
-readAbsoluteTime = do
-  R.lift (R.skipSpaces *> R.string "TAI")
-  skipSome (R.lift (R.satisfy isSpace))
-  localTime <- readPrec
-  return (utcToTAITime (const 0) (localTimeToUTC utc localTime))
+showDiffTime :: DiffTime -> String
+showDiffTime (realToFrac -> seconds_) = do
+  let hours, minutes :: Integer
+      seconds :: Double
+      (minutes_, seconds) = divMod' seconds_ 60
+      (hours,    minutes) = divMod' minutes_ 60
+  case properFraction seconds of
+    (s :: Integer, 0) -> printf "%dh%dm%ds" hours minutes s
+    _                 -> printf "%dh%dm%.3fs" hours minutes seconds

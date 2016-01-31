@@ -58,6 +58,7 @@ import Data.Map (Map)
 -- Time
 import Data.Time
 import Data.Time.Calendar.OrdinalDate
+import Data.Time.Clock.TAI
 import Data.Time.Zones                    -- tz
 -- UUIDs
 import Data.UUID hiding (null)            -- uuid
@@ -92,7 +93,7 @@ data Reminder
       _snoozedUntil     :: UTCTime,
       -- | Whether reminder text should be hidden by default
       _secret           :: Bool }
-  deriving (Eq, Read, Show, Generic, Binary)
+  deriving (Eq, Show, Generic, Binary)
 
 data Reminder_v0 = Reminder_v0 {
   _schedule_v0         :: When,
@@ -121,7 +122,7 @@ makeLenses ''Reminder
 data RemindersFile = RemindersFile {
   _remindersOn  :: Map UUID Reminder,
   _remindersOff :: Map UUID Reminder }
-  deriving (Read, Show)
+  deriving (Show)
 
 makeLenses ''RemindersFile
 
@@ -231,13 +232,28 @@ timeInInterval (ha, ma, sa) (hb, mb, sb) (hx, mx, sx) =
                         , (ha,ma,sa) <= (h,m,s)
                         , (hb,mb,sb) >= (h,m,s) ]      
 
--- | Check whether a reminder has fired in a time interval. Not as efficient
--- as it could be (it takes O(days in the interval)). 'IO' is needed to look
--- up the timezone from the name contained in the schedule.
+{- |
+Check whether a reminder has fired in a time interval. Not as efficient as it could be (it takes O(days in the interval) for 'Mask'). 'IO' is needed to look up the timezone from the name possibly contained in the schedule.
+-}
 isReminderInInterval :: (UTCTime, UTCTime) -> When -> IO Bool
-isReminderInInterval (ceilingUTCTime -> a, floorUTCTime -> b) Moment{..} =
+isReminderInInterval (a, b) Moment{..} =
   return (utcToAbsoluteTime a <= moment && moment <= utcToAbsoluteTime b)
-isReminderInInterval (ceilingUTCTime -> a, floorUTCTime -> b) Mask{..} = do
+isReminderInInterval (a, b) Periodic{..} = do
+  -- x      x      x      x      x      ...
+  --      |    |
+  --      a    b
+  -- 
+  -- Each “x” denotes a single firing of the periodic reminder; the distance
+  -- between “x”s is ‘period’, the 1st “x” happens at moment ‘start’. To
+  -- check whether any of “x”s is in the a..b interval, we first have to
+  -- shift everything in time (so that the 1st “x” would be 0) and then check
+  -- whether ‘a `div` period’ and ‘b `div` period’ are different.
+  let a' = diffAbsoluteTime (utcToAbsoluteTime a) start
+      b' = diffAbsoluteTime (utcToAbsoluteTime b) start
+  return $
+    utcToAbsoluteTime b >= start &&
+    a' `div'` period /= (b' `div'` period :: Integer)
+isReminderInInterval (a, b) Mask{..} = do
   -- If timezone is specified in the reminder, use it, and otherwise use the
   -- local one.
   tz <- case timezone of
@@ -245,8 +261,8 @@ isReminderInInterval (ceilingUTCTime -> a, floorUTCTime -> b) Mask{..} = do
     Just x  -> loadSystemTZ x
 
   -- Break endpoints of the interval into parts (using the timezone we know).
-  let (dateA@(yearA,monthA,dayA),timeA) = expandTime tz a
-      (dateB@(yearB,monthB,dayB),timeB) = expandTime tz b
+  let (dateA@(yearA,monthA,dayA),timeA) = expandTime tz (ceilingUTCTime a)
+      (dateB@(yearB,monthB,dayB),timeB) = expandTime tz (floorUTCTime b)
 
   -- Use the mask to decide on which days the time specified in the mask can
   -- occur (after that we can stop being bothered about time at all). When a
