@@ -65,8 +65,11 @@ data When
       hour     :: Maybe Int,
       minute   :: Maybe Int,
       second   :: Maybe Int,
-      weekdays :: Maybe [Int],    -- ^ Numbers between 1 and 7.
-      timezone :: Maybe String }  -- ^ 'Nothing' = always use local timezone.
+      weekdays :: Maybe [Int],    -- ^ Numbers between 1 and 7
+      timezone :: Maybe String }  -- ^ 'Nothing' = always use local timezone;
+                                  --   otherwise the timezone is stored
+                                  --   as a string in Olson format (e.g.
+                                  --   “Europe/Paris”)
   | Moment {
       moment   :: AbsoluteTime }
   | Periodic {
