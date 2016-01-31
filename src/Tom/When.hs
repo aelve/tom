@@ -92,10 +92,14 @@ instance Migrate When where
   migrate Moment_v0{..} = Moment {
     moment = moment_v0 }
 
--- Examples of format used by Read and Show instances of Mask:
--- 
---   - xxxx-xx-03,13.xx:56
---   - 2015-xx-xx[6,7],12.00:00(UTC)
+{-
+Examples of format used by the Show instance of Mask:
+
+  * xxxx-xx-03,13.xx:56
+  * 2015-xx-xx[6,7],12.00:00(UTC)
+
+TODO: document other constructors
+-}
 
 instance Show When where
   show Mask{..} = do
