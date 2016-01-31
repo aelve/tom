@@ -11,9 +11,9 @@ NoImplicitPrelude
   #-}
 
 
-module Tom.Daemon
+module Main
 (
-  runDaemon,
+  main,
   testAlertWindow,
 )
 where
@@ -125,8 +125,8 @@ How does all this work:
 
 * When it's time to show an alert for a reminder, we use 'createAlert'. It's possible that the alert window is already there and just got ignored or hidden by other windows or whatever and we simply need to bring it to front so that the user would see it again; however, we can't do that easily (there's e.g. 'windowPresent', but at least in Gnome instead of -moving the window to the current workspace- it changes the current workspace, and that's annoying), so we have to recreate the window (using the state of the previous window).
 -}
-runDaemon :: IO ()
-runDaemon = withDB $ \db -> do
+main :: IO ()
+main = withDB $ \db -> do
   Acid.createCheckpoint db
   -- The server has to be on a bound thread because otherwise it receives
   -- like 1 packet per second (no idea why) – hence forkOS is used instead of

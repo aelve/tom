@@ -43,7 +43,7 @@ data RPCError = ServerNotRunning | NoResponse | ServerError String
   deriving (Show)
 
 showError :: RPCError -> String
-showError ServerNotRunning = "couldn't connect to the daemon; run tom --daemon"
+showError ServerNotRunning = "couldn't connect to the daemon; run tom-daemon"
 showError NoResponse       = "no response from the daemon"
 showError (ServerError s)  = s
 
