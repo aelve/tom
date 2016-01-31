@@ -15,7 +15,13 @@ NoImplicitPrelude
 module Tom.When
 (
   When(..),
-  allWhenParsers,
+  WhenParser,
+  WhenParserData(..),
+  getWhenParserData,
+  runWhenParser,
+  runWhenParser',
+  parseWhen,
+  -- * Individual parsers
   momentP,
   wildcardP,
   durationMomentP,
@@ -26,9 +32,15 @@ where
 
 -- General
 import BasePrelude hiding (try, second)
+-- Lenses
+import Lens.Micro.Platform
+-- Monads & monad transformers
+import Control.Monad.Reader
+-- Text
+import Data.Text (Text)
 -- Parsing
 import Text.Megaparsec
-import Text.Megaparsec.Text
+import Text.Megaparsec.Prim
 import Text.Megaparsec.Lexer
 -- Time
 import Data.Time
@@ -124,17 +136,54 @@ instance Show When where
   show Periodic{..} = printf "every %s from %s"
                              (showDiffTime period) (showAbsoluteTime start)
 
--- | A parser for time specifiers ('When'). IO may be needed to query
--- timezones, for instance.
-type WhenParser = Parser (IO When)
+showAbsoluteTime :: AbsoluteTime -> String
+showAbsoluteTime = ("TAI " ++) . show .
+                   utcToLocalTime utc . taiToUTCTime (const 0)
 
--- | All mask parsers exported by this module.
-allWhenParsers :: [WhenParser]
-allWhenParsers = [momentP, wildcardP, durationMomentP, periodicP]
+showDiffTime :: DiffTime -> String
+showDiffTime (realToFrac -> seconds_) = do
+  let hours, minutes :: Integer
+      seconds :: Double
+      (minutes_, seconds) = divMod' seconds_ 60
+      (hours,    minutes) = divMod' minutes_ 60
+  case properFraction seconds of
+    (s :: Integer, 0) -> printf "%dh%dm%ds" hours minutes s
+    _                 -> printf "%dh%dm%.3fs" hours minutes seconds
+
+{- |
+A parser for time specifiers ('When').
+
+The parser is given access to the current time, timezone, and IO (might be needed to query some timezone from the timezone data file – look for 'loadSystemTZ').
+-}
+type WhenParser = ParsecT Text (ReaderT WhenParserData IO) When
+
+data WhenParserData = WhenParserData {
+  _currentTime :: UTCTime,
+  _localTZ     :: TZ }
+
+makeLenses ''WhenParserData
+
+getWhenParserData :: IO WhenParserData
+getWhenParserData = WhenParserData <$> getCurrentTime <*> loadLocalTZ
+
+runWhenParser' :: WhenParserData -> WhenParser -> Text -> IO (Either ParseError When)
+runWhenParser' pData p s = do
+  runReaderT (runParserT p "" s) pData
+
+runWhenParser :: WhenParser -> Text -> IO (Either ParseError When)
+runWhenParser p s = do
+  pData <- getWhenParserData
+  runWhenParser' pData p s
+
+parseWhen :: Text -> IO (Either ParseError When)
+parseWhen = runWhenParser p
+  where
+    p = choice $ map (\x -> try (x <* eof))
+          [momentP, wildcardP, durationMomentP, periodicP]
 
 -- | A parser for “am”/“pm”, returning the function to apply to hours to get
 -- the corrected version.
-parseAMPM :: (Num a, Ord a) => Parser (a -> a)
+parseAMPM :: (MonadParsec s m Char, Num a, Ord a) => m (a -> a)
 parseAMPM = do
   -- 1. “pm” means “add 12 to hour”.
   -- 2. Unless it's 12pm, in which case it doesn't.
@@ -155,17 +204,17 @@ Parses year, accounting for the “assume current millenium” shortcut.
   * @"2020"@ → 2020
   * @"3388"@ → 3388
 -}
-yearP :: Parser Integer
+yearP :: MonadParsec s m Char => m Integer
 yearP = do
   s <- some digitChar
   return $ if length s < 4 then 2000 + read s else read s
 
 -- | Timezone name parser. Returns already queried Olson name.
-timezoneP :: Parser String
+timezoneP :: MonadParsec s m Char => m String
 timezoneP = do
   name <- some (letterChar <|> digitChar <|> oneOf "-+")
   case tzNameToOlson name of
-    Nothing -> mzero
+    Nothing -> fail $ printf "unknown timezone name ‘%s’" name
     Just tz -> return tz
 
 {- |
@@ -229,128 +278,126 @@ momentP = do
 
   -- Finally, we have to fill in the blanks (“Nothing”) so that the result is
   -- the *least* possible time which is still bigger than the current time.
-  return $ do
-    time <- getCurrentTime
-    localTZ <- loadLocalTZ
-    
-    -- The parser returns a function which is given current time and
-    -- timezone. We're inside this function now, and we turn given time and
-    -- timezone into something more usable – namely, year/month/day/etc.
-    tz <- case mbTZ of
-      Nothing -> return localTZ
-      Just x  -> loadSystemTZ x
-    let ((cYear,cMonth,cDay),(cHour,cMinute,cSecond)) = expandTime tz time
 
-    -- These are lowest possible second, minute+second, hour+minute+second,
-    -- etc. (where “possible” means “don't contradict filled parts of the
-    -- time mask”). For convenience, they are built as nested tuples.
-    let zeroSecond =   fromMaybe 0 mbSecond
-        zeroMinute = ( fromMaybe 0 mbMinute , zeroSecond )
-        zeroHour   = ( fromMaybe 0 mbHour   , zeroMinute )
-        zeroDay    = ( fromMaybe 1 mbDay    , zeroHour   )
-        zeroMonth  = ( fromMaybe 1 mbMonth  , zeroDay    )
+  -- Let's turn time and timezone into something more usable – namely,
+  -- year/month/day/etc.
+  time <- view currentTime
+  tz <- case mbTZ of
+    Nothing -> view localTZ
+    Just x  -> liftIO $ loadSystemTZ x
+  let ((cYear,cMonth,cDay),(cHour,cMinute,cSecond)) = expandTime tz time
 
-    -- The following functions compute the lowest possible second,
-    -- minute+second, hour+minute+second, etc. which is *bigger than
-    -- given*. They return Nothing if the given time can't be incremented.
-    let nextSecond x = case mbSecond of
-          Just y  -> if x < y then Just y else Nothing
-          Nothing -> if x <= 58 then Just (x+1) else Nothing
+  -- These are lowest possible second, minute+second, hour+minute+second,
+  -- etc. (where “possible” means “don't contradict filled parts of the
+  -- time mask”). For convenience, they are built as nested tuples.
+  let zeroSecond =   fromMaybe 0 mbSecond
+      zeroMinute = ( fromMaybe 0 mbMinute , zeroSecond )
+      zeroHour   = ( fromMaybe 0 mbHour   , zeroMinute )
+      zeroDay    = ( fromMaybe 1 mbDay    , zeroHour   )
+      zeroMonth  = ( fromMaybe 1 mbMonth  , zeroDay    )
 
-    let nextMinute (x, rest) = case mbMinute of
-          -- If we *have* to use mbMinute, we only decide whether we have to
-          -- increment the second or not.
+  -- The following functions compute the lowest possible second,
+  -- minute+second, hour+minute+second, etc. which is *bigger than
+  -- given*. They return Nothing if the given time can't be incremented.
+  let nextSecond x = case mbSecond of
+        Just y  -> if x < y then Just y else Nothing
+        Nothing -> if x <= 58 then Just (x+1) else Nothing
+
+  let nextMinute (x, rest) = case mbMinute of
+        -- If we *have* to use mbMinute, we only decide whether we have to
+        -- increment the second or not.
+        Just y
+          | x < y     -> Just (y, zeroSecond)
+          | x == y    -> (y,) <$> nextSecond rest
+          | otherwise -> Nothing
+        -- If we don't have to use mbMinute, we try to increment the second
+        -- first, and increase the minute if we can't increment the second.
+        Nothing       -> (x,) <$> nextSecond rest  <|>
+                         (guard (x <= 58) >> return (x+1, zeroSecond))
+
+  -- nextHour is the same as nextMinute.
+  let nextHour (x, rest) = case mbHour of
+        Just y
+          | x < y     -> Just (y, zeroMinute)
+          | x == y    -> (y,) <$> nextMinute rest
+          | otherwise -> Nothing
+        Nothing       -> (x,) <$> nextMinute rest  <|>
+                         (guard (x <= 22) >> return (x+1, zeroMinute))
+
+  -- nextDay is special – whether you can increment the day or not depends
+  -- on the month. Therefore, it has to be passed the number of days in the
+  -- month. Moreover, it's possible that the day from the mask ('mbDay')
+  -- can't fit into month – in this case we return Nothing.
+  let nextDay days (x, rest) = do
+        -- It's easier to compute first and check whether the day fits
+        -- afterwards.
+        (x', rest') <- case mbDay of
           Just y
-            | x < y     -> Just (y, zeroSecond)
-            | x == y    -> (y,) <$> nextSecond rest
+            | x < y     -> Just (y, zeroHour)
+            | x == y    -> (y,) <$> nextHour rest
             | otherwise -> Nothing
-          -- If we don't have to use mbMinute, we try to increment the second
-          -- first, and increase the minute if we can't increment the second.
-          Nothing       -> (x,) <$> nextSecond rest  <|>
-                           (guard (x <= 58) >> return (x+1, zeroSecond))
+          Nothing       -> (x,) <$> nextHour rest  <|>
+                           Just (x+1, zeroHour)
+        guard (x' <= days)
+        return (x', rest')
 
-    -- nextHour is the same as nextMinute.
-    let nextHour (x, rest) = case mbHour of
-          Just y
-            | x < y     -> Just (y, zeroMinute)
-            | x == y    -> (y,) <$> nextMinute rest
-            | otherwise -> Nothing
-          Nothing       -> (x,) <$> nextMinute rest  <|>
-                           (guard (x <= 22) >> return (x+1, zeroMinute))
+  -- nextMonth is special too, because the amount of days in the month
+  -- depends on the year. So, we have to know whether the year is
+  -- leap. Moreover, additional trouble comes with the fact that it may not
+  -- be enough to increment once – we try incrementing both once and twice
+  -- to make sure we touch at least one month with 31 days in it.
+  let nextMonth isLeap (x, rest) = case mbMonth of
+        Just y
+          | x < y     -> Just (y, zeroDay)
+          | x == y    -> (y,) <$> nextDay (monthLength isLeap y) rest
+          | otherwise -> Nothing
+        Nothing       -> asum
+          -- Increment day.
+          [ (x,) <$> nextDay (monthLength isLeap x) rest
+          -- Increment month once, and check whether the day fits.
+          , do guard (x <= 11)
+               guard (fst zeroDay <= monthLength isLeap (x+1))
+               return (x+1, zeroDay)
+          -- Increment month twice, and check.
+          , do guard (x <= 10)
+               guard (fst zeroDay <= monthLength isLeap (x+2))
+               return (x+2, zeroDay)
+          ]
 
-    -- nextDay is special – whether you can increment the day or not depends
-    -- on the month. Therefore, it has to be passed the number of days in the
-    -- month. Moreover, it's possible that the day from the mask ('mbDay')
-    -- can't fit into month – in this case we return Nothing.
-    let nextDay days (x, rest) = do
-          -- It's easier to compute first and check whether the day fits
-          -- afterwards.
-          (x', rest') <- case mbDay of
-            Just y
-              | x < y     -> Just (y, zeroHour)
-              | x == y    -> (y,) <$> nextHour rest
-              | otherwise -> Nothing
-            Nothing       -> (x,) <$> nextHour rest  <|>
-                             Just (x+1, zeroHour)
-          guard (x' <= days)
-          return (x', rest')
+  -- Phew, almost done.
+  let nextYear (x, rest) = case mbYear of
+        Just y
+          | x < y     -> Just (y, zeroMonth)
+          | x == y    -> (y,) <$> nextMonth (isLeapYear y) rest
+          | otherwise -> Nothing
+        Nothing       -> asum
+          -- Increment month.
+          [ (x,) <$> nextMonth (isLeapYear x) rest
+          -- Increment year once, see if day and month fit. (They can only
+          -- not fit if the year isn't leap but it's February 29.)
+          , do let (m,(d,_)) = zeroMonth
+               guard $ not (m == 2 && d == 29 && not (isLeapYear (x+1)))
+               return (x+1, zeroMonth)
+          -- Increment year until it's a leap one.
+          , return (fromJust (find isLeapYear [x+2..]), zeroMonth)
+          ]
 
-    -- nextMonth is special too, because the amount of days in the month
-    -- depends on the year. So, we have to know whether the year is
-    -- leap. Moreover, additional trouble comes with the fact that it may not
-    -- be enough to increment once – we try incrementing both once and twice
-    -- to make sure we touch at least one month with 31 days in it.
-    let nextMonth isLeap (x, rest) = case mbMonth of
-          Just y
-            | x < y     -> Just (y, zeroDay)
-            | x == y    -> (y,) <$> nextDay (monthLength isLeap y) rest
-            | otherwise -> Nothing
-          Nothing       -> asum
-            -- Increment day.
-            [ (x,) <$> nextDay (monthLength isLeap x) rest
-            -- Increment month once, and check whether the day fits.
-            , do guard (x <= 11)
-                 guard (fst zeroDay <= monthLength isLeap (x+1))
-                 return (x+1, zeroDay)
-            -- Increment month twice, and check.
-            , do guard (x <= 10)
-                 guard (fst zeroDay <= monthLength isLeap (x+2))
-                 return (x+2, zeroDay)
-            ]
-
-    -- Phew, almost done.
-    let nextYear (x, rest) = case mbYear of
-          Just y
-            | x < y     -> Just (y, zeroMonth)
-            | x == y    -> (y,) <$> nextMonth (isLeapYear y) rest
-            | otherwise -> Nothing
-          Nothing       -> asum
-            -- Increment month.
-            [ (x,) <$> nextMonth (isLeapYear x) rest
-            -- Increment year once, see if day and month fit. (They can only
-            -- not fit if the year isn't leap but it's February 29.)
-            , do let (m,(d,_)) = zeroMonth
-                 guard $ not (m == 2 && d == 29 && not (isLeapYear (x+1)))
-                 return (x+1, zeroMonth)
-            -- Increment year until it's a leap one.
-            , return (fromJust (find isLeapYear [x+2..]), zeroMonth)
-            ]
-
-    -- Now we simply use nextYear to increment the current time, which would
-    -- give us next time which fits the mask.
-    let (year', (month', (day', (hour', (minute', second'))))) =
-          fromMaybe 
-            (error "Can't be scheduled – time is in the past.")
-            (nextYear (cYear, (cMonth, (cDay, (cHour, (cMinute, cSecond))))))
-    return Mask {
-      year     = Just year',
-      month    = Just month',
-      day      = Just day',
-      hour     = Just hour',
-      minute   = Just minute',
-      second   = Just second',
-      weekdays = Nothing,
-      timezone = mbTZ }
+  -- Now we simply use nextYear to increment the current time, which would
+  -- give us next time which fits the mask.
+  (year', (month', (day', (hour', (minute', second'))))) <-
+    -- TODO: figure out when this actually happens and add to tests
+    case nextYear (cYear, (cMonth, (cDay, (cHour, (cMinute, cSecond))))) of
+      Nothing -> fail "time is always in the past"
+      Just x  -> return x
+  return Mask {
+    year     = Just year',
+    month    = Just month',
+    day      = Just day',
+    hour     = Just hour',
+    minute   = Just minute',
+    second   = Just second',
+    weekdays = Nothing,
+    timezone = mbTZ }
 
 {- |
 A parser for masks with wildcards.
@@ -411,7 +458,7 @@ wildcardP = do
     -- And now we can return parsed hour, minute, second, and timezone.
     return (fromAMPM <$> h, m, s, tz)
 
-  return $ return Mask {
+  return Mask {
     year     = mbYear,
     month    = mbMonth,
     day      = mbDay,
@@ -427,10 +474,9 @@ A parser for moments coming after some time (like “1h20m”).
 durationMomentP :: WhenParser
 durationMomentP = do
   dur <- duration
-  return $ do
-    time <- getAbsoluteTime
-    return $ Moment {
-      moment = addAbsoluteTime dur time }
+  time <- view currentTime
+  return $ Moment {
+    moment = addAbsoluteTime dur (utcToAbsoluteTime time) }
 
 {- |
 A parser for periodic stuff: “every 1h20m”.
@@ -440,13 +486,12 @@ periodicP = do
   string "every"
   skipSome spaceChar
   dur <- duration
-  return $ do
-    time <- getAbsoluteTime
-    return $ Periodic {
-      start  = addAbsoluteTime dur time,
-      period = dur }
+  time <- view currentTime
+  return $ Periodic {
+    start  = addAbsoluteTime dur (utcToAbsoluteTime time),
+    period = dur }
 
-nonnegative :: Integral a => Parser a
+nonnegative :: (MonadParsec s m Char, Integral a) => m a
 nonnegative = fromInteger <$> integer
 
 {- |
@@ -456,24 +501,10 @@ nonnegative = fromInteger <$> integer
   * “m” (minutes)
   * “s” (seconds)
 -}
-duration :: Parser DiffTime
+duration :: MonadParsec s m Char => m DiffTime
 duration = fmap (fromInteger . sum) $ some $ do
   n <- nonnegative
   choice [
     string "h" *> pure (n*3600),
     string "m" *> pure (n*60),
     string "s" *> pure n ]
-
-showAbsoluteTime :: AbsoluteTime -> String
-showAbsoluteTime = ("TAI " ++) . show .
-                   utcToLocalTime utc . taiToUTCTime (const 0)
-
-showDiffTime :: DiffTime -> String
-showDiffTime (realToFrac -> seconds_) = do
-  let hours, minutes :: Integer
-      seconds :: Double
-      (minutes_, seconds) = divMod' seconds_ 60
-      (hours,    minutes) = divMod' minutes_ 60
-  case properFraction seconds of
-    (s :: Integer, 0) -> printf "%dh%dm%ds" hours minutes s
-    _                 -> printf "%dh%dm%.3fs" hours minutes seconds

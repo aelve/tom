@@ -1,6 +1,7 @@
 {-# LANGUAGE
 ViewPatterns,
 OverloadedStrings,
+LambdaCase,
 NoImplicitPrelude
   #-}
 
@@ -24,8 +25,6 @@ import qualified Data.Map as M
 -- Text
 import Data.Text (Text)
 import qualified Data.Text as T
--- Parsing
-import Text.Megaparsec
 -- Time
 import Data.Time
 -- GUI
@@ -51,10 +50,9 @@ main = do
 scheduleReminder :: Text -> Text -> IO ()
 scheduleReminder scheduleStr msg = do
   time <- getCurrentTime
-  let scheduleP = choice $ map (\p -> try (p <* eof)) allWhenParsers
-  _schedule <- case parse scheduleP "" scheduleStr of
+  _schedule <- parseWhen scheduleStr >>= \case
     Left err -> error (show err)
-    Right x  -> x
+    Right x  -> return x
   RPC.call' $ RPC.AddReminder $ Reminder {
     _schedule         = _schedule,
     _message          = msg,
@@ -101,18 +99,17 @@ runGUI = do
     t <- get scheduleEntry entryText
     if T.null t
       then set scheduleInfo [labelText := ("enter the schedule" :: Text)]
-      else case parseSchedule t of
-             Left err -> set scheduleInfo [labelText := err]
+      else parseWhen t >>= \case
+             Left err -> set scheduleInfo [labelText := show err]
              Right _  -> set scheduleInfo [labelText := ("schedule is valid" :: Text)]
   -- When Enter is pressed in the reminder entry box, schedule the reminder.
   reminderEntry `on` keyPressEvent $ tryEvent $ do
     "Return" <- T.unpack <$> eventKeyName
     [] <- eventModifier  -- so that Shift+Enter would work
     scheduleText <- liftIO $ get scheduleEntry entryText
-    case parseSchedule scheduleText of
+    liftIO (parseWhen scheduleText) >>= \case
       Left _ -> return ()
-      Right getSchedule -> liftIO $ do
-        _schedule <- getSchedule
+      Right _schedule -> liftIO $ do
         _message <- do
           buffer <- get reminderEntry textViewBuffer
           get buffer textBufferText
@@ -214,11 +211,6 @@ createGUI = do
     tableChildYOptions scheduleInfo := [Fill],
     tableChildYOptions secretCheckBox := [Fill] ]
   return (window, scheduleEntry, scheduleInfo, reminderEntry, secretCheckBox)
-
-parseSchedule :: Text -> Either String (IO When)
-parseSchedule s = either (Left . show) Right $ parse scheduleP "" s
-  where
-    scheduleP = choice $ map (\p -> try (p <* eof)) allWhenParsers
 
 testMainWindow :: IO ()
 testMainWindow = testGUI (view _1 <$> createGUI)
