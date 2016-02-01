@@ -21,6 +21,7 @@ module Tom.When
   runWhenParser,
   runWhenParser',
   parseWhen,
+  parseWhen',
   -- * Individual parsers
   momentP,
   wildcardP,
@@ -171,18 +172,23 @@ getWhenParserData = WhenParserData <$> getCurrentTime <*> loadLocalTZ
 
 runWhenParser' :: WhenParserData -> WhenParser -> Text -> IO (Either ParseError When)
 runWhenParser' pData p s = do
-  runReaderT (runParserT p "" s) pData
+  runReaderT (runParserT (p <* eof) "" s) pData
 
 runWhenParser :: WhenParser -> Text -> IO (Either ParseError When)
 runWhenParser p s = do
   pData <- getWhenParserData
   runWhenParser' pData p s
 
-parseWhen :: Text -> IO (Either ParseError When)
-parseWhen = runWhenParser p
+parseWhen' :: WhenParserData -> Text -> IO (Either ParseError When)
+parseWhen' pData = runWhenParser' pData p
   where
     p = choice $ map (\x -> try (x <* eof))
           [momentP, wildcardP, durationMomentP, periodicP]
+
+parseWhen :: Text -> IO (Either ParseError When)
+parseWhen s = do
+  pData <- getWhenParserData
+  parseWhen' pData s
 
 -- | A parser for “am”/“pm”, returning the function to apply to hours to get
 -- the corrected version.

@@ -81,3 +81,16 @@ executable tom-daemon
                        -threaded
   hs-source-dirs:      src
   default-language:    Haskell2010
+
+test-suite tests
+  main-is:             Test.hs
+  type:                exitcode-stdio-1.0
+  build-depends:       base
+                     , base-prelude
+                     , hspec                    == 2.2.*
+                     , time
+                     , tom
+                     , tz
+  hs-source-dirs:      tests
+  default-language:    Haskell2010
+  ghc-options:         -Wall -fno-warn-unused-do-bind
