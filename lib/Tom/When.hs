@@ -22,6 +22,7 @@ module Tom.When
   runWhenParser',
   parseWhen,
   parseWhen',
+  displayWhen,
   -- * Individual parsers
   momentP,
   wildcardP,
@@ -140,6 +141,12 @@ instance Show When where
   show Periodic{..} = printf "every %s from %s"
                              (showDiffTime period) (showAbsoluteTime start)
 
+displayWhen :: When -> String
+displayWhen x = case x of
+  Mask{} -> show x
+  Moment{..} -> showAbsoluteTime moment
+  Periodic{..} -> printf "every %s" (showDiffTime period)
+
 showAbsoluteTime :: AbsoluteTime -> String
 showAbsoluteTime = ("TAI " ++) . show .
                    utcToLocalTime utc . taiToUTCTime (const 0)
@@ -150,9 +157,14 @@ showDiffTime (realToFrac -> seconds_) = do
       seconds :: Double
       (minutes_, seconds) = divMod' seconds_ 60
       (hours,    minutes) = divMod' minutes_ 60
-  case properFraction seconds of
-    (s :: Integer, 0) -> printf "%dh%dm%ds" hours minutes s
-    _                 -> printf "%dh%dm%.3fs" hours minutes seconds
+  concat [if hours /= 0
+            then show hours ++ "h" else "",
+          if minutes /= 0 || (hours /= 0 && seconds /= 0)
+            then show minutes ++ "m" else "",
+          case properFraction seconds of
+            (0 :: Integer, 0) -> ""
+            (s, 0) -> printf "%ds" s
+            _ -> printf "%.3fs" seconds]
 
 {- |
 A parser for time specifiers ('When').

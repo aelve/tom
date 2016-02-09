@@ -350,7 +350,7 @@ createAlert db uuid reminder varState = do
   alertWindow <- makeAlertWindow
                    dialogMessage
                    startEditable
-                   (T.pack (show (reminder ^. schedule)))  -- caption
+                   (T.pack (displayWhen (reminder ^. schedule)))  -- caption
                    (reminder ^. secret)
                    onEdit
                    onCommit
