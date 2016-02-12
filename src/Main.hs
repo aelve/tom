@@ -79,8 +79,6 @@ listReminders method = do
   for_ (sorted (M.elems rsOn)) $ \reminder ->
     printf "  %s: %s\n" (show (reminder ^. schedule)) (reminder ^. message)
 
--- todo: gray placeholders like “reminder text” and “when should it run”
-
 runGUI :: IO ()
 runGUI = do
   -- Initialise GTK.
