@@ -167,18 +167,12 @@ createGUI = do
   --   * Tab isn't accepted as a character (so that the user could use it
   --     to switch back to scheduleEntry)
   set reminderEntry [
-    textViewLeftMargin := 7,
-    textViewRightMargin := 7,
+    textViewLeftMargin := 4,
+    textViewRightMargin := 4,
     textViewWrapMode := WrapWord,
     textViewAcceptsTab := False ]
-  -- Add top/bottom margins to reminderEntry. They have a *slightly*
-  -- different color than the rest of the textbox, but I don't know of a
-  -- better way to do this (e.g. adding padding with CSS doesn't work).
-  widgetModifyBase reminderEntry StateActive (Color 30 30 30)
-  textViewSetBorderWindowSize reminderEntry TextWindowTop 4
-  textViewSetBorderWindowSize reminderEntry TextWindowBottom 4
-  -- Create a ScrolledWindow containing reminderEntry, so that it would have
-  -- scrollbars when there's too much text in it.
+  -- Create a ScrolledWindow containing reminderEntryAlignment, so that it
+  -- would have scrollbars when there's too much text in it.
   reminderEntryScrolled <- scrolledWindowNew Nothing Nothing
   reminderEntryScrolled `containerAdd` reminderEntry
   -- Set attributes:
