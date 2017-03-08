@@ -166,12 +166,16 @@ showDiffTime (realToFrac -> seconds_) = do
             (s, 0) -> printf "%ds" s
             _ -> printf "%.3fs" seconds]
 
+----------------------------------------------------------------------------
+-- Parsing utilities
+----------------------------------------------------------------------------
+
 {- |
 A parser for time specifiers ('When').
 
 The parser is given access to the current time, timezone, and IO (might be needed to query some timezone from the timezone data file – look for 'loadSystemTZ').
 -}
-type WhenParser = ParsecT Text (ReaderT WhenParserData IO) When
+type WhenParser = ParsecT Dec Text (ReaderT WhenParserData IO) When
 
 data WhenParserData = WhenParserData {
   _currentTime :: UTCTime,
@@ -182,29 +186,29 @@ makeLenses ''WhenParserData
 getWhenParserData :: IO WhenParserData
 getWhenParserData = WhenParserData <$> getCurrentTime <*> loadLocalTZ
 
-runWhenParser' :: WhenParserData -> WhenParser -> Text -> IO (Either ParseError When)
+runWhenParser' :: WhenParserData -> WhenParser -> Text -> IO (Either (ParseError Char Dec) When)
 runWhenParser' pData p s = do
   runReaderT (runParserT (p <* eof) "" s) pData
 
-runWhenParser :: WhenParser -> Text -> IO (Either ParseError When)
+runWhenParser :: WhenParser -> Text -> IO (Either (ParseError Char Dec) When)
 runWhenParser p s = do
   pData <- getWhenParserData
   runWhenParser' pData p s
 
-parseWhen' :: WhenParserData -> Text -> IO (Either ParseError When)
+parseWhen' :: WhenParserData -> Text -> IO (Either (ParseError Char Dec) When)
 parseWhen' pData = runWhenParser' pData p
   where
     p = choice $ map (\x -> try (x <* eof))
           [momentP, wildcardP, durationMomentP, periodicP]
 
-parseWhen :: Text -> IO (Either ParseError When)
+parseWhen :: Text -> IO (Either (ParseError Char Dec) When)
 parseWhen s = do
   pData <- getWhenParserData
   parseWhen' pData s
 
 -- | A parser for “am”/“pm”, returning the function to apply to hours to get
 -- the corrected version.
-parseAMPM :: (MonadParsec s m Char, Num a, Ord a) => m (a -> a)
+parseAMPM :: (MonadParsec Dec Text m, Num a, Ord a) => m (a -> a)
 parseAMPM = do
   -- 1. “pm” means “add 12 to hour”.
   -- 2. Unless it's 12pm, in which case it doesn't.
@@ -225,13 +229,13 @@ Parses year, accounting for the “assume current millenium” shortcut.
   * @"2020"@ → 2020
   * @"3388"@ → 3388
 -}
-yearP :: MonadParsec s m Char => m Integer
+yearP :: MonadParsec Dec Text m => m Integer
 yearP = do
   s <- some digitChar
   return $ if length s < 4 then 2000 + read s else read s
 
 -- | Timezone name parser. Returns already queried Olson name.
-timezoneP :: MonadParsec s m Char => m String
+timezoneP :: MonadParsec Dec Text m => m String
 timezoneP = do
   name <- some (letterChar <|> digitChar <|> oneOf "-+")
   case tzNameToOlson name of
@@ -512,7 +516,7 @@ periodicP = do
     start  = addAbsoluteTime dur (utcToAbsoluteTime time),
     period = dur }
 
-nonnegative :: (MonadParsec s m Char, Integral a) => m a
+nonnegative :: (MonadParsec Dec Text m, Integral a) => m a
 nonnegative = fromInteger <$> integer
 
 {- |
@@ -522,7 +526,7 @@ nonnegative = fromInteger <$> integer
   * “m” (minutes)
   * “s” (seconds)
 -}
-duration :: MonadParsec s m Char => m DiffTime
+duration :: MonadParsec Dec Text m => m DiffTime
 duration = fmap (fromInteger . sum) $ some $ do
   n <- nonnegative
   choice [

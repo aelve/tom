@@ -1,3 +1,4 @@
+
 # Tom
 
 [![Hackage](https://img.shields.io/hackage/v/tom.svg)](https://hackage.haskell.org/package/tom)
@@ -10,3 +11,12 @@ This is a minimalistic tool for reminders:
 * you enter time (which can be recurring)
 * you enter text
 * at that time a reminder pops up and you can delay it or turn it off
+
+## Building instructions
+
+```
+$ stack install gtk2hs-buildtools
+$ stack build
+```
+
+If Stack complains about not finding GHC, do `stack setup` first.
