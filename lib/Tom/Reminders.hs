@@ -197,10 +197,8 @@ nullRemindersFile = RemindersFile {
 -- everything is.
 getDataDirectory :: IO FilePath
 getDataDirectory = do
-  dir <- getAppUserDataDirectory "aelve/tom"
-  ex <- doesDirectoryExist dir
-  unless ex $
-    createDirectory dir
+  dir <- getAppUserDataDirectory ("aelve" </> "tom")
+  createDirectoryIfMissing True dir
   return dir
 
 type Acid = AcidState RemindersFile
@@ -208,7 +206,7 @@ type Acid = AcidState RemindersFile
 withDB :: (Acid -> IO a) -> IO a
 withDB act = do
   dir <- getDataDirectory
-  bracket (openLocalStateFrom (dir </> "state/") nullRemindersFile)
+  bracket (openLocalStateFrom (dir </> "state") nullRemindersFile)
           closeAcidState
           act
 
