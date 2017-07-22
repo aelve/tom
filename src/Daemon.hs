@@ -1,14 +1,12 @@
-{-# LANGUAGE
-GADTs,
-RecordWildCards,
-TemplateHaskell,
-OverloadedStrings,
-ViewPatterns,
-MultiWayIf,
-ScopedTypeVariables,
-RecursiveDo,
-NoImplicitPrelude
-  #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 
 
 module Main

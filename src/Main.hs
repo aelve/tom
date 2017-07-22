@@ -1,9 +1,7 @@
-{-# LANGUAGE
-ViewPatterns,
-OverloadedStrings,
-LambdaCase,
-NoImplicitPrelude
-  #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 
 
 module Main

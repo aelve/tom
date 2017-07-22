@@ -1,11 +1,9 @@
-{-# LANGUAGE
-ScopedTypeVariables,
-GADTs,
-RankNTypes,
-OverloadedStrings,
-ExistentialQuantification,
-NoImplicitPrelude
-  #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 
 
 module Tom.RPC

@@ -1,15 +1,13 @@
-{-# LANGUAGE
-RecordWildCards,
-DeriveGeneric,
-DeriveAnyClass,
-TupleSections,
-FlexibleContexts,
-TemplateHaskell,
-ViewPatterns,
-ScopedTypeVariables,
-TypeFamilies,
-NoImplicitPrelude
-  #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 
 
 module Tom.When

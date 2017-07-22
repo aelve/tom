@@ -1,7 +1,5 @@
-{-# LANGUAGE
-OverloadedStrings,
-NoImplicitPrelude
-  #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 
 
 -- General

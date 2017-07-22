@@ -1,14 +1,12 @@
-{-# LANGUAGE
-TypeFamilies,
-RecordWildCards,
-ViewPatterns,
-DeriveGeneric,
-DeriveAnyClass,
-OverloadedStrings,
-TemplateHaskell,
-RankNTypes,
-NoImplicitPrelude
-  #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 
 
 module Tom.Reminders

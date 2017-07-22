@@ -1,9 +1,7 @@
-{-# LANGUAGE
-ViewPatterns,
-FlexibleContexts,
-TemplateHaskell,
-NoImplicitPrelude
-  #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
